@@ -630,16 +630,22 @@
       
       try {
         const imageInfo = currentImage.info;
+        console.log('Deleting image with info:', imageInfo);
         
         if (imageInfo.type === 'Generated Outfit' || imageInfo.type === 'Latest Try-On Result') {
           // Delete from generated outfits
+          console.log('Deleting generated outfit:', currentImage.url);
           await this.deleteGeneratedOutfit(currentImage);
         } else if (imageInfo.type === 'Clothing Item') {
           // Delete from wardrobe (clothing items)
+          console.log('Deleting clothing item:', currentImage.url);
           await this.deleteClothingItem(currentImage);
         } else if (imageInfo.type === 'Avatar') {
           // Delete avatar
+          console.log('Deleting avatar:', currentImage.url);
           await this.deleteAvatarImage(currentImage);
+        } else {
+          console.warn('Unknown image type for deletion:', imageInfo.type);
         }
         
         // Close the modal after deletion
@@ -653,7 +659,12 @@
         
       } catch (error) {
         console.error('Error deleting image:', error);
-        CTO.ui.manager.showStatus('Error deleting image', 'error');
+        console.error('Error details:', error.message, error.stack);
+        if (global.toastManager) {
+          global.toastManager.error('Delete Failed', error.message || 'Failed to delete image');
+        } else {
+          CTO.ui.manager.showStatus('Error deleting image', 'error');
+        }
       }
     }
 
@@ -662,19 +673,35 @@
       const { generatedOutfits = [] } = await CTO.storage.get('generatedOutfits');
       const imageUrl = imageData.url;
       
+      console.log(`Attempting to delete outfit with URL: ${imageUrl}`);
+      console.log(`Total outfits before deletion: ${generatedOutfits.length}`);
+      
       // Find and remove the outfit
       const updatedOutfits = generatedOutfits.filter(outfit => outfit.generatedImage !== imageUrl);
       
+      console.log(`Total outfits after filtering: ${updatedOutfits.length}`);
+      
       if (updatedOutfits.length === generatedOutfits.length) {
+        console.error('Outfit not found in generatedOutfits array');
+        console.log('Available outfit URLs:', generatedOutfits.map(o => o.generatedImage));
         throw new Error('Outfit not found');
       }
       
       await CTO.storage.set({ generatedOutfits: updatedOutfits });
+      console.log('Storage updated successfully');
       
-      // Refresh the outfits and try-on displays
+      // Update the outfit manager's instance data directly and refresh displays
       if (CTO.outfit.manager) {
+        // Update the instance variable directly to ensure immediate sync
+        CTO.outfit.manager.generatedOutfits = updatedOutfits;
+        console.log('Outfit manager instance updated');
+        
+        // Then refresh the displays
         await CTO.outfit.manager.loadOutfits();
         await CTO.outfit.manager.loadLatestTryOn();
+        console.log('Displays refreshed');
+      } else {
+        console.error('CTO.outfit.manager not available');
       }
     }
 
