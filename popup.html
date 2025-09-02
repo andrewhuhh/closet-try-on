@@ -215,10 +215,10 @@
         <p>Manage your avatars, select which one to use for try-ons, and generate new ones.</p>
         
         <!-- Current Active Avatar -->
-        <div style="margin-bottom: 24px; padding: 16px; background: var(--surface-3); border-radius: 8px;">
+        <div class="active-avatar-preview-section">
           <h4>Active Avatar</h4>
           <div id="active-avatar-display" style="display: flex; align-items: center; gap: 16px;">
-            <div id="active-avatar-preview" style="width: 80px; height: 80px; border-radius: 8px; background: var(--surface-1); display: flex; align-items: center; justify-content: center; color: var(--text-2);">
+            <div id="active-avatar-preview" class="active-avatar-preview">
               No avatar selected
             </div>
             <div>
@@ -325,7 +325,7 @@
 
           <!-- Original Clothing Items Section -->
           <div id="original-clothing-section" class="original-clothing-section" style="display: none;">
-            <h4 style="color: white; font-size: 14px; margin: 8px 0 8px 0;">Original Clothing:</h4>
+            <h4 style="color: white; font-size: 14px; margin: 8px 0 8px 0;">Original Clothing (click to view in wardrobe):</h4>
             <div id="original-clothing-thumbnails" class="original-clothing-thumbnails">
               <!-- Original clothing thumbnails will be populated here -->
             </div>

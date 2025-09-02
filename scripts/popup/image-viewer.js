@@ -238,31 +238,104 @@
       clothingUrls.forEach((url, index) => {
         const thumbnail = document.createElement('div');
         thumbnail.className = 'original-clothing-thumbnail';
+        thumbnail.title = 'Click to view this item in your wardrobe';
         thumbnail.innerHTML = `
           <img src="${url}" alt="Original clothing ${index + 1}">
-          <div class="expand-icon">🔍</div>
+          <div class="expand-icon">👕</div>
         `;
         
-        // Click to view original clothing item in larger view
-        thumbnail.addEventListener('click', () => {
-          const clothingCollection = clothingUrls.map((clothingUrl, idx) => ({
-            url: clothingUrl,
-            info: {
-              type: 'Original Clothing Item',
-              index: idx + 1,
-              total: clothingUrls.length
+        // Click to navigate to wardrobe and find the clothing item
+        thumbnail.addEventListener('click', async () => {
+          try {
+            // Close the current image viewer modal
+            this.closeImageViewer();
+            
+            // Switch to wardrobe tab
+            if (CTO.ui.manager) {
+              await CTO.ui.manager.switchTab('wardrobe');
             }
-          }));
-          
-          this.openImageViewer(url, {
-            type: 'Original Clothing Item',
-            index: index + 1,
-            total: clothingUrls.length
-          }, clothingCollection, index);
+            
+            // Wait a moment for the tab to switch
+            setTimeout(async () => {
+              await this.findAndHighlightClothingItem(url);
+            }, 300);
+            
+          } catch (error) {
+            console.error('Error navigating to wardrobe:', error);
+            if (global.toastManager) {
+              global.toastManager.error('Navigation Error', 'Could not navigate to wardrobe');
+            }
+          }
         });
         
         thumbnailsContainer.appendChild(thumbnail);
       });
+    }
+
+    // New helper method to find and highlight clothing item in wardrobe
+    async findAndHighlightClothingItem(clothingUrl) {
+      try {
+        // Get all clothing items from storage
+        const { clothingItems = [] } = await CTO.storage.get('clothingItems');
+        
+        // Find the index of the clothing item with matching URL
+        const itemIndex = clothingItems.findIndex(item => item.url === clothingUrl);
+        
+        if (itemIndex === -1) {
+          if (global.toastManager) {
+            global.toastManager.warning('Item Not Found', 'This clothing item is not in your wardrobe');
+          }
+          return;
+        }
+        
+        // Find the wardrobe gallery
+        const wardrobeGallery = document.getElementById('wardrobe-gallery');
+        if (!wardrobeGallery) {
+          console.error('Wardrobe gallery not found');
+          return;
+        }
+        
+        // Find the corresponding clothing item element
+        const clothingItems_elements = wardrobeGallery.querySelectorAll('.outfit-item');
+        
+        if (itemIndex < clothingItems_elements.length) {
+          const targetItem = clothingItems_elements[itemIndex];
+          
+          // Scroll the item into view
+          targetItem.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'center',
+            inline: 'center'
+          });
+          
+          // Add highlight effect
+          targetItem.style.transition = 'all 0.3s ease';
+          targetItem.style.transform = 'scale(1.05)';
+          targetItem.style.boxShadow = '0 0 20px rgba(99, 102, 241, 0.6)';
+          targetItem.style.border = '2px solid var(--primary-color)';
+          
+          // Remove highlight after 3 seconds
+          setTimeout(() => {
+            targetItem.style.transform = '';
+            targetItem.style.boxShadow = '';
+            targetItem.style.border = '';
+          }, 3000);
+          
+          // Show success toast
+          if (global.toastManager) {
+            global.toastManager.success('Item Found!', 'Clothing item highlighted in wardrobe', {
+              icon: '👕',
+              duration: 2000
+            });
+          }
+        }
+        
+      } catch (error) {
+        console.error('Error finding clothing item:', error);
+        if (global.toastManager) {
+          global.toastManager.error('Error', 'Could not find clothing item in wardrobe');
+        }
+      }
     }
 
     async showRegenerationControls(outfitData) {
@@ -697,7 +770,7 @@
   global.addViewButtonToImage = function(container, imageUrl, imageInfo, imageCollection = null, index = 0) {
     const viewBtn = document.createElement('button');
     viewBtn.className = 'image-item-view-btn';
-    viewBtn.textContent = '👁️ View';
+    viewBtn.textContent = '👁️';
     viewBtn.onclick = (e) => {
       e.stopPropagation();
       ns.imageViewer.viewer.openImageViewer(imageUrl, imageInfo, imageCollection, index);
@@ -732,7 +805,7 @@
     }
     
     const text = document.createElement('span');
-    text.textContent = 'Source';
+    text.textContent = '';
     content.appendChild(text);
     
     sourceBtn.appendChild(content);
