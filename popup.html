@@ -1,0 +1,380 @@
+﻿<!doctype html>
+<html>
+  <head>
+    <title>Try-me-on</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="container">
+      <h1>Try-it-on</h1>
+      <div class="settings-dropdown">
+        <button id="settings-toggle" class="btn btn-secondary" style="padding: 8px 12px; font-size: 12px;">
+          ⚙️ Settings
+        </button>
+        <div id="settings-menu" class="dropdown-menu" style="display: none;">
+          <button class="dropdown-item" data-setting="avatar-management">
+            👤 Avatar Management
+          </button>
+          <button class="dropdown-item" data-setting="api-settings">
+            🔑 API Settings
+          </button>
+        </div>
+      </div>
+
+      <!-- API Key Setup Section -->
+      <div id="api-section" class="section">
+        <h2>API Key Setup</h2>
+        <div class="form-group">
+          <label for="api-key">Gemini API Key:</label>
+          <input type="password" id="api-key" placeholder="Enter your Gemini API key">
+          <small>Get your API key from <a href="https://aistudio.google.com/" target="_blank">Google AI Studio</a></small>
+        </div>
+        <button id="save-api-key" class="btn btn-primary">Save API Key</button>
+        <div id="api-status"></div>
+      </div>
+
+      <!-- API Key Update Section -->
+      <div id="api-update-section" class="section hidden">
+        <h2>Update API Key</h2>
+        <p>Your current API key has issues. Please update it to continue.</p>
+        <div class="form-group">
+          <label for="new-api-key">New Gemini API Key:</label>
+          <input type="password" id="new-api-key" placeholder="Enter your new Gemini API key">
+          <small>Get your API key from <a href="https://aistudio.google.com/" target="_blank">Google AI Studio</a></small>
+        </div>
+        <button id="update-api-key" class="btn btn-primary">Update API Key</button>
+        <button id="back-to-avatar" class="btn btn-secondary">Back to Avatar</button>
+        <div id="api-update-status"></div>
+      </div>
+
+      <!-- Avatar Setup Section -->
+      <div id="avatar-section" class="section hidden">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+          <h2 style="margin: 0;">Create Your Avatar</h2>
+          <button id="manage-api-from-avatar" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px;">
+            API Settings
+          </button>
+        </div>
+        <p>Upload 3+ photos of yourself to generate your avatar models.</p>
+
+        <div class="form-group">
+          <label>Gender (for sample outfit):</label>
+          <div class="radio-group">
+            <label class="radio-option">
+              <input type="radio" name="gender" value="male" checked> Male
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="gender" value="female"> Female
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="gender" value="other"> Other
+            </label>
+          </div>
+        </div>
+
+        <div class="file-upload" id="photo-upload">
+          <div>Drop photos here or click to browse</div>
+          <input type="file" id="photo-input" multiple accept="image/*" style="display: none;">
+        </div>
+
+        <div id="uploaded-photos" class="file-list hidden"></div>
+
+        <div style="display: flex; gap: 8px; margin-top: 16px;">
+          <button id="generate-avatar" class="btn btn-primary" disabled style="flex: 1;">
+            <span id="generate-text">Generate Avatar</span>
+            <span id="generate-loading" class="loading" style="display: none;"></span>
+          </button>
+          <button id="back-to-main-from-avatar" class="btn btn-secondary" style="display: none;">
+            Back to Main
+          </button>
+        </div>
+      </div>
+
+      <!-- Avatar Gallery Section -->
+      <div id="avatar-gallery-section" class="section hidden">
+        <h2>Your Avatars</h2>
+        <div id="avatar-grid" class="avatar-grid">
+          <!-- Avatars will be populated here -->
+        </div>
+        <button id="regenerate-avatar" class="btn btn-secondary">Regenerate Avatar</button>
+      </div>
+
+      <!-- Main Interface -->
+      <div id="main-interface" class="section hidden">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+          <div class="tab-buttons">
+            <button class="tab-btn active" data-tab="outfits">Gallery</button>
+            <button class="tab-btn" data-tab="outfit-builder">Outfit</button>
+            <button class="tab-btn" data-tab="wardrobe">Wardrobe</button>
+            <button class="tab-btn" data-tab="try-on">Latest</button>
+          </div>
+        </div>
+
+        <!-- Outfits Tab -->
+        <div id="outfits-tab" class="tabs active">
+          <h3>Generated Outfits</h3>
+          
+          <!-- Inline Loading Widget for outfit generation -->
+          <div id="outfit-loading" class="loading-widget" style="display: none;">
+            <div class="loading-widget-content">
+              <div class="loading-spinner-small"></div>
+              <div class="loading-text">
+                <span class="loading-title">🎨 Generating Your Try-On...</span>
+                <span class="loading-time">Elapsed: <span id="outfit-elapsed-time">0s</span></span>
+              </div>
+            </div>
+          </div>
+          
+          <div id="outfit-gallery" class="outfit-gallery">
+            <!-- Generated outfits will be displayed here -->
+          </div>
+          <p id="no-outfits" style="text-align: center; color: var(--text-2); margin: 24px 0;">
+            No outfits generated yet. Right-click on clothing images and select "Try It On"!
+          </p>
+        </div>
+
+        <!-- Outfit Builder Tab -->
+        <div id="outfit-builder-tab" class="tabs">
+          <h3>Build Your Outfit</h3>
+          
+          <div class="outfit-builder-section">
+            <div class="current-outfit">
+              <h4>Current Outfit (<span id="outfit-item-count">0</span> items)</h4>
+              
+              <div id="current-outfit-items" class="outfit-items-grid">
+                <!-- Current outfit items will be displayed here -->
+              </div>
+              
+              <div class="outfit-actions">
+                <button id="clear-outfit" class="btn btn-secondary" disabled>
+                  🗑️ Clear Outfit
+                </button>
+                <button id="try-on-outfit" class="btn btn-primary" disabled>
+                  ✨ Try On Complete Outfit
+                </button>
+              </div>
+            </div>
+            
+            <div class="add-to-outfit-section" style="margin-top: 24px;">
+              <h4>Add Items from Wardrobe</h4>
+              <div id="wardrobe-for-outfit" class="outfit-gallery">
+                <!-- Wardrobe items for adding to outfit will be displayed here -->
+              </div>
+              <p id="no-wardrobe-for-outfit" style="text-align: center; color: var(--text-2); margin: 24px 0;">
+                No clothing items in wardrobe. Right-click on clothing images and select "Add to Outfit" to save items!
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Wardrobe Tab -->
+        <div id="wardrobe-tab" class="tabs">
+          <h3>Saved Clothing Items</h3>
+          <div id="wardrobe-gallery" class="outfit-gallery">
+            <!-- Saved clothing items will be displayed here -->
+          </div>
+          <p id="no-wardrobe" style="text-align: center; color: var(--text-2); margin: 24px 0;">
+            No clothing items saved yet. Right-click on clothing images and select "Add to Outfit"!
+          </p>
+        </div>
+
+        <!-- Latest Try-On Tab -->
+        <div id="try-on-tab" class="tabs">
+          <h3>Latest Try-On Result</h3>
+          
+          <!-- Inline Loading Widget for latest try-on -->
+          <div id="tryon-loading" class="loading-widget" style="display: none;">
+            <div class="loading-widget-content">
+              <div class="loading-spinner-small"></div>
+              <div class="loading-text">
+                <span class="loading-title">✨ Creating Your Look...</span>
+                <span class="loading-time">Elapsed: <span id="tryon-elapsed-time">0s</span></span>
+              </div>
+            </div>
+          </div>
+          
+          <div id="latest-try-on">
+            <!-- Latest try-on result will be displayed here -->
+          </div>
+          <p id="no-try-on" style="text-align: center; color: var(--text-2); margin: 24px 0;">
+            No try-on results yet. Try right-clicking on clothing images!
+          </p>
+        </div>
+
+
+      </div>
+
+      <!-- Avatar Management Settings Section -->
+      <div id="avatar-management-section" class="section hidden">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+          <h2 style="margin: 0;">Avatar Management</h2>
+          <button id="close-avatar-management" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px;">
+            Back
+          </button>
+        </div>
+        <p>Manage your avatars, select which one to use for try-ons, and generate new ones.</p>
+        
+        <!-- Current Active Avatar -->
+        <div style="margin-bottom: 24px; padding: 16px; background: var(--surface-3); border-radius: 8px;">
+          <h4>Active Avatar</h4>
+          <div id="active-avatar-display" style="display: flex; align-items: center; gap: 16px;">
+            <div id="active-avatar-preview" style="width: 80px; height: 80px; border-radius: 8px; background: var(--surface-1); display: flex; align-items: center; justify-content: center; color: var(--text-2);">
+              No avatar selected
+            </div>
+            <div>
+              <p id="active-avatar-info" style="margin: 0; font-size: 14px; color: var(--text-2);">
+                Select an avatar below to use for try-ons
+              </p>
+              <button id="create-new-avatar" class="btn btn-primary" style="margin-top: 8px; font-size: 12px; padding: 6px 12px;">
+                Create New Avatar
+              </button>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Avatar Gallery -->
+        <div style="margin-bottom: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h4 style="margin: 0;">Your Avatars</h4>
+            <span id="avatar-count" style="font-size: 12px; color: var(--text-2);">0 avatars</span>
+          </div>
+          <div id="avatar-management-grid" class="avatar-grid">
+            <!-- Avatars will be populated here -->
+          </div>
+          <div id="no-avatars-message" style="text-align: center; padding: 32px; color: var(--text-2); border: 2px dashed var(--border); border-radius: 8px;">
+            <p style="margin: 0 0 12px 0;">No avatars created yet</p>
+            <button id="start-avatar-creation" class="btn btn-primary">Create Your First Avatar</button>
+          </div>
+        </div>
+        
+        <!-- Avatar Actions -->
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button id="regenerate-all-avatars" class="btn btn-secondary" disabled>
+            <span id="regen-text">Regenerate All</span>
+            <span id="regen-loading" class="loading" style="display: none;"></span>
+          </button>
+          <button id="delete-selected-avatar" class="btn" style="background: var(--error-color); color: white;" disabled>
+            Delete Selected
+          </button>
+          <button id="export-avatars" class="btn btn-secondary" disabled>
+            Export Avatars
+          </button>
+        </div>
+        
+        <!-- Avatar Creation Progress -->
+        <div id="avatar-creation-progress" style="margin-top: 16px; padding: 16px; background: var(--surface-3); border-radius: 8px; display: none;">
+          <h4>Creating Avatar...</h4>
+          <div style="background: var(--surface-1); border-radius: 4px; height: 8px; overflow: hidden; margin: 8px 0;">
+            <div id="progress-bar" style="height: 100%; background: var(--primary-color); width: 0%; transition: width 0.3s;"></div>
+          </div>
+          <p id="progress-text" style="margin: 8px 0 0 0; font-size: 12px; color: var(--text-2);">Initializing...</p>
+        </div>
+      </div>
+
+      <!-- API Settings Section -->
+      <div id="api-settings-section" class="section hidden">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+          <h2 style="margin: 0;">API Key Management</h2>
+          <button id="close-api-settings" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px;">
+            Back
+          </button>
+        </div>
+        <p>Update your Gemini API key if you're experiencing issues or need to use a different key.</p>
+        
+        <div class="form-group">
+          <label for="main-api-key">Current API Key:</label>
+          <input type="password" id="main-api-key" placeholder="Enter your Gemini API key" readonly>
+          <small>Get your API key from <a href="https://aistudio.google.com/" target="_blank">Google AI Studio</a></small>
+        </div>
+        
+        <div class="form-group">
+          <label for="new-main-api-key">New API Key:</label>
+          <input type="password" id="new-main-api-key" placeholder="Enter your new Gemini API key">
+        </div>
+        
+        <button id="update-main-api-key" class="btn btn-primary">Update API Key</button>
+        <button id="test-api-key" class="btn btn-secondary">Test Current Key</button>
+        
+        <div id="main-api-status"></div>
+        
+        <div style="margin-top: 16px; padding: 12px; background: var(--surface-3); border-radius: 4px;">
+          <h4>API Key Status</h4>
+          <p id="api-status-info">Checking API key status...</p>
+        </div>
+      </div>
+
+      <!-- Status Messages -->
+      <div id="global-status"></div>
+    </div>
+
+    <!-- Image Viewer Modal -->
+    <div id="image-viewer-modal" class="image-viewer-modal">
+      <button id="image-viewer-close" class="image-viewer-close">×</button>
+      
+      <!-- Navigation arrows -->
+      <button id="image-viewer-prev" class="image-viewer-nav prev">‹</button>
+      <button id="image-viewer-next" class="image-viewer-nav next">›</button>
+      
+      <div class="image-viewer-content">
+        <img id="image-viewer-image" class="image-viewer-image" alt="Viewing image">
+        
+        <div class="image-viewer-controls">
+          <div id="image-viewer-info" class="image-viewer-info">
+            <!-- Image info will be populated here -->
+          </div>
+
+          <!-- Original Clothing Items Section -->
+          <div id="original-clothing-section" class="original-clothing-section" style="display: none;">
+            <h4 style="color: white; font-size: 14px; margin: 8px 0 8px 0;">Original Clothing:</h4>
+            <div id="original-clothing-thumbnails" class="original-clothing-thumbnails">
+              <!-- Original clothing thumbnails will be populated here -->
+            </div>
+          </div>
+
+          <!-- Regeneration Controls -->
+          <div id="regeneration-controls" class="regeneration-controls" style="display: none;">
+            <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+              <select id="pose-selector" class="pose-selector">
+                <option value="">Select pose...</option>
+              </select>
+              <button id="regenerate-outfit" class="image-viewer-btn primary" style="padding: 6px 12px; font-size: 12px;">
+                🔄 Regenerate
+              </button>
+            </div>
+          </div>
+
+          <div class="image-viewer-actions">
+            <button id="open-in-tab" class="image-viewer-btn primary">
+              🔗 Open in Tab
+            </button>
+            
+            <button id="view-source" class="image-viewer-btn secondary" style="display: none;">
+              🌐 View Source
+            </button>
+            
+            <button id="download-image" class="image-viewer-btn secondary">
+              💾 Download
+            </button>
+            
+            <button id="share-image" class="image-viewer-btn secondary">
+              📤 Share
+            </button>
+            
+            <button id="delete-image" class="image-viewer-btn danger">
+              🗑️ Delete
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="scripts/common/namespace.js"></script>
+    <script src="scripts/common/image-utils.js"></script>
+    <script src="scripts/popup/api.js"></script>
+    <script src="scripts/popup/toast.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
