@@ -74,6 +74,14 @@
     }
 
     async addToOutfit(item) {
+      // Check if outfit is already full (max 4 items)
+      if (this.currentOutfit.length >= 4) {
+        if (global.toastManager) {
+          global.toastManager.warning('Outfit Full', 'Maximum 4 items allowed per outfit');
+        }
+        return;
+      }
+
       // Check if item is already in outfit
       if (this.currentOutfit.some(outfitItem => outfitItem.url === item.url)) {
         if (global.toastManager) {
@@ -126,8 +134,90 @@
       }
     }
 
+    // Cleanup function to remove duplicate IDs from wardrobe
+    async cleanupWardrobe() {
+      try {
+        const { clothingItems = [] } = await CTO.storage.get('clothingItems');
+        
+        if (clothingItems.length === 0) return;
+        
+        // Create a Map to track unique items by URL (our identifier)
+        const uniqueItems = new Map();
+        const duplicatesFound = [];
+        
+        clothingItems.forEach((item, index) => {
+          if (!item.url) {
+            console.warn('Found clothing item without URL at index:', index);
+            return;
+          }
+          
+          if (uniqueItems.has(item.url)) {
+            // This is a duplicate
+            duplicatesFound.push({
+              url: item.url,
+              index: index,
+              addedAt: item.addedAt
+            });
+          } else {
+            // Keep the first occurrence (usually oldest)
+            uniqueItems.set(item.url, item);
+          }
+        });
+        
+        if (duplicatesFound.length > 0) {
+          console.log(`Found ${duplicatesFound.length} duplicate wardrobe items, cleaning up...`);
+          
+          // Convert Map back to array
+          const cleanedItems = Array.from(uniqueItems.values());
+          
+          // Save cleaned wardrobe
+          await CTO.storage.set({ clothingItems: cleanedItems });
+          
+          // Update local state
+          this.clothingItems = cleanedItems;
+          
+          // Show notification about cleanup
+          if (global.toastManager) {
+            global.toastManager.info('Wardrobe Cleaned', `Removed ${duplicatesFound.length} duplicate item${duplicatesFound.length !== 1 ? 's' : ''}`, {
+              icon: '🧹',
+              duration: 3000
+            });
+          }
+          
+          console.log('Wardrobe cleanup completed:', {
+            originalCount: clothingItems.length,
+            cleanedCount: cleanedItems.length,
+            duplicatesRemoved: duplicatesFound.length
+          });
+        }
+        
+      } catch (error) {
+        console.error('Error during wardrobe cleanup:', error);
+      }
+    }
+
+    // Check if item already exists in wardrobe by URL
+    async isItemInWardrobe(itemUrl) {
+      try {
+        const { clothingItems = [] } = await CTO.storage.get('clothingItems');
+        return clothingItems.some(item => item.url === itemUrl);
+      } catch (error) {
+        console.error('Error checking if item exists in wardrobe:', error);
+        return false;
+      }
+    }
+
     async addOutfitImageToWardrobe(outfit) {
       try {
+        // First check if item already exists
+        const isAlreadyInWardrobe = await this.isItemInWardrobe(outfit.generatedImage);
+        if (isAlreadyInWardrobe) {
+          if (global.toastManager) {
+            global.toastManager.wardrobeItemExists('Generated Outfit');
+          }
+          return;
+        }
+
         // Create a clothing item from the generated outfit image
         const clothingItem = {
           url: outfit.generatedImage,
@@ -139,10 +229,10 @@
           }
         };
 
-        // Get existing wardrobe and check for duplicates
+        // Get existing wardrobe
         const { clothingItems = [] } = await CTO.storage.get('clothingItems');
         
-        // Check if this outfit image is already in wardrobe
+        // Double-check for duplicates before adding (extra safety)
         if (clothingItems.some(item => item.url === outfit.generatedImage)) {
           if (global.toastManager) {
             global.toastManager.wardrobeItemExists('Generated Outfit');
@@ -209,41 +299,34 @@
     }
 
     updateOutfitDisplay() {
-      const outfitItemsGrid = document.getElementById('current-outfit-items');
+      const outfitContainer = document.getElementById('current-outfit-items');
       const outfitItemCount = document.getElementById('outfit-item-count');
       const clearOutfitBtn = document.getElementById('clear-outfit');
       const tryOnOutfitBtn = document.getElementById('try-on-outfit');
       const currentOutfitDiv = document.querySelector('.current-outfit');
 
-      if (!outfitItemsGrid) return;
+      if (!outfitContainer) return;
 
       // Update count
       if (outfitItemCount) {
         outfitItemCount.textContent = this.currentOutfit.length;
       }
 
+      // Update avatar display
+      this.updateAvatarDisplay();
+
+      // Get the outfit items grid (the right side)
+      const outfitItemsGrid = outfitContainer.querySelector('.outfit-items-grid');
+      if (!outfitItemsGrid) return;
+
       // Clear existing items
       outfitItemsGrid.innerHTML = '';
 
-      if (this.currentOutfit.length === 0) {
-        // Show empty state
-        const emptyState = document.createElement('div');
-        emptyState.style.textAlign = 'center';
-        emptyState.style.color = 'var(--text-2)';
-        emptyState.style.gridColumn = '1 / -1';
-        emptyState.innerHTML = `
-          <p>No items in outfit yet</p>
-          <p style="font-size: 12px;">Add items from your wardrobe below!</p>
-        `;
-        outfitItemsGrid.appendChild(emptyState);
-        
-        // Update button states
-        if (clearOutfitBtn) clearOutfitBtn.disabled = true;
-        if (tryOnOutfitBtn) tryOnOutfitBtn.disabled = true;
-        if (currentOutfitDiv) currentOutfitDiv.classList.remove('has-items');
-      } else {
-        // Show outfit items
-        this.currentOutfit.forEach((item, index) => {
+      // Always show 4 slots - filled items or placeholders
+      for (let i = 0; i < 4; i++) {
+        if (i < this.currentOutfit.length) {
+          // Show actual outfit item
+          const item = this.currentOutfit[i];
           const outfitItemCard = document.createElement('div');
           outfitItemCard.className = 'outfit-item-card';
 
@@ -254,17 +337,213 @@
           const removeBtn = document.createElement('button');
           removeBtn.className = 'outfit-item-remove';
           removeBtn.textContent = '-';
-          removeBtn.onclick = () => this.removeFromOutfit(index);
+          removeBtn.onclick = () => this.removeFromOutfit(i);
 
           outfitItemCard.appendChild(img);
           outfitItemCard.appendChild(removeBtn);
           outfitItemsGrid.appendChild(outfitItemCard);
-        });
+        } else {
+          // Show clickable placeholder
+          const placeholderCard = document.createElement('div');
+          placeholderCard.className = 'outfit-item-placeholder clickable';
+          placeholderCard.style.cssText = `
+            border: 2px dashed var(--border);
+            border-radius: 6px;
+            background: var(--surface-1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-2);
+            font-size: 18px;
+            text-align: center;
+            min-height: 80px;
+            aspect-ratio: 1/1;
+            cursor: pointer;
+            transition: all 0.2s ease;
+          `;
+          placeholderCard.innerHTML = `<span>+</span>`;
+          placeholderCard.onclick = () => this.openWardrobePopup(i);
+          
+          // Add hover effect
+          placeholderCard.addEventListener('mouseenter', () => {
+            placeholderCard.style.borderColor = 'var(--primary-color)';
+            placeholderCard.style.background = 'var(--surface-2)';
+          });
+          placeholderCard.addEventListener('mouseleave', () => {
+            placeholderCard.style.borderColor = 'var(--border)';
+            placeholderCard.style.background = 'var(--surface-1)';
+          });
+          
+          outfitItemsGrid.appendChild(placeholderCard);
+        }
+      }
 
-        // Update button states
-        if (clearOutfitBtn) clearOutfitBtn.disabled = false;
-        if (tryOnOutfitBtn) tryOnOutfitBtn.disabled = false;
-        if (currentOutfitDiv) currentOutfitDiv.classList.add('has-items');
+      // Update button states
+      if (clearOutfitBtn) clearOutfitBtn.disabled = this.currentOutfit.length === 0;
+      if (tryOnOutfitBtn) tryOnOutfitBtn.disabled = this.currentOutfit.length === 0;
+      if (currentOutfitDiv) {
+        if (this.currentOutfit.length > 0) {
+          currentOutfitDiv.classList.add('has-items');
+        } else {
+          currentOutfitDiv.classList.remove('has-items');
+        }
+      }
+    }
+
+    // Wardrobe Popup Functions
+    async openWardrobePopup(slotIndex) {
+      this.currentSlotIndex = slotIndex;
+      const popup = document.getElementById('wardrobe-popup');
+      const popupGrid = document.getElementById('wardrobe-popup-grid');
+      const noWardrobeMsg = document.getElementById('no-wardrobe-popup');
+      
+      if (!popup || !popupGrid) return;
+
+      // Load wardrobe items
+      try {
+        const { clothingItems } = await CTO.storage.get('clothingItems');
+        const wardrobeItems = clothingItems || [];
+
+        // Clear existing items
+        popupGrid.innerHTML = '';
+
+        if (wardrobeItems.length === 0) {
+          noWardrobeMsg.style.display = 'block';
+          popupGrid.style.display = 'none';
+        } else {
+          noWardrobeMsg.style.display = 'none';
+          popupGrid.style.display = 'grid';
+
+          // Populate wardrobe items
+          wardrobeItems.forEach((item, index) => {
+            const itemCard = document.createElement('div');
+            itemCard.className = 'wardrobe-popup-item';
+            itemCard.setAttribute('data-item-id', item.url);
+            
+            // Check if item is already in outfit
+            const isAlreadyAdded = this.currentOutfit.some(outfitItem => outfitItem.url === item.url);
+            if (isAlreadyAdded) {
+              itemCard.classList.add('already-added');
+            }
+
+            const img = document.createElement('img');
+            img.src = item.url;
+            img.alt = 'Wardrobe item';
+            itemCard.appendChild(img);
+
+            // Add multi-select checkbox
+            if (CTO.multiSelect?.manager) {
+              const checkbox = CTO.multiSelect.manager.createMultiSelectCheckbox(item.url, 'wardrobe-popup', item);
+              itemCard.appendChild(checkbox);
+            }
+
+            if (isAlreadyAdded) {
+              const badge = document.createElement('div');
+              badge.className = 'already-added-badge';
+              badge.textContent = 'Added';
+              itemCard.appendChild(badge);
+            } else {
+              // Add click handler for non-added items
+              itemCard.addEventListener('click', (e) => {
+                // Only select item if not clicking on multi-select checkbox
+                if (!e.target.closest('.multi-select-checkbox')) {
+                  this.selectWardrobeItem(item);
+                }
+              });
+            }
+
+            popupGrid.appendChild(itemCard);
+          });
+        }
+
+        // Show popup
+        popup.classList.remove('hidden');
+        
+        // Add event listeners for closing
+        this.setupPopupEventListeners();
+
+      } catch (error) {
+        console.error('Error loading wardrobe for popup:', error);
+        if (global.toastManager) {
+          global.toastManager.error('Error', 'Failed to load wardrobe items');
+        }
+      }
+    }
+
+    setupPopupEventListeners() {
+      const popup = document.getElementById('wardrobe-popup');
+      const closeBtn = document.getElementById('close-wardrobe-popup');
+      
+      // Close button
+      if (closeBtn) {
+        closeBtn.onclick = () => this.closeWardrobePopup();
+      }
+      
+      // Click outside to close
+      popup.onclick = (e) => {
+        if (e.target === popup) {
+          this.closeWardrobePopup();
+        }
+      };
+      
+      // Escape key to close
+      const handleEscape = (e) => {
+        if (e.key === 'Escape') {
+          this.closeWardrobePopup();
+          document.removeEventListener('keydown', handleEscape);
+        }
+      };
+      document.addEventListener('keydown', handleEscape);
+    }
+
+    async selectWardrobeItem(item) {
+      try {
+        await this.addToOutfit(item);
+        this.closeWardrobePopup();
+      } catch (error) {
+        console.error('Error adding wardrobe item to outfit:', error);
+      }
+    }
+
+    closeWardrobePopup() {
+      const popup = document.getElementById('wardrobe-popup');
+      if (popup) {
+        popup.classList.add('hidden');
+      }
+      this.currentSlotIndex = null;
+    }
+
+    async updateAvatarDisplay() {
+      const avatarImage = document.getElementById('outfit-avatar-image');
+      if (!avatarImage) return;
+
+      try {
+        // Get current avatar from storage
+        const { avatars, selectedAvatarIndex } = await CTO.storage.get(['avatars', 'selectedAvatarIndex']);
+        
+        if (avatars && avatars.length > 0 && selectedAvatarIndex !== undefined) {
+          const currentAvatar = avatars[selectedAvatarIndex];
+          if (currentAvatar && !currentAvatar.failed) {
+            avatarImage.innerHTML = `<img src="${currentAvatar.url}" alt="Your Avatar">`;
+            return;
+          }
+        }
+        
+        // No avatar available - show placeholder
+        avatarImage.innerHTML = `
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
+            <div style="font-size: 24px;">👤</div>
+            <div style="font-size: 10px; text-align: center;">No Avatar<br>Selected</div>
+          </div>
+        `;
+      } catch (error) {
+        console.error('Error loading avatar for outfit display:', error);
+        avatarImage.innerHTML = `
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
+            <div style="font-size: 24px;">👤</div>
+            <div style="font-size: 10px; text-align: center;">Avatar<br>Error</div>
+          </div>
+        `;
       }
     }
 
@@ -422,6 +701,7 @@
         const outfitItem = document.createElement('div');
         outfitItem.className = 'outfit-item';
         outfitItem.style.position = 'relative';
+        outfitItem.setAttribute('data-item-id', outfit.generatedImage);
 
         // Create image container div
         const imgContainer = document.createElement('div');
@@ -450,8 +730,10 @@
 
         // Add click handler for image to open viewer
         img.onclick = (e) => {
-          // Only open viewer if not clicking on buttons
-          if (!e.target.closest('.add-to-outfit-btn') && !e.target.closest('.more-options-btn')) {
+          // Only open viewer if not clicking on buttons or multi-select checkbox
+          if (!e.target.closest('.add-to-outfit-btn') && 
+              !e.target.closest('.more-options-btn') && 
+              !e.target.closest('.multi-select-checkbox')) {
             if (global.CTO?.imageViewer?.viewer) {
               global.CTO.imageViewer.viewer.openImageViewer(outfit.generatedImage, {
                 type: outfit.isMultiItem ? 'Multi-Item Outfit' : 'Generated Outfit',
@@ -464,6 +746,12 @@
             }
           }
         };
+
+        // Add multi-select checkbox
+        if (CTO.multiSelect?.manager) {
+          const checkbox = CTO.multiSelect.manager.createMultiSelectCheckbox(outfit.generatedImage, 'outfits', outfit);
+          outfitItem.appendChild(checkbox);
+        }
 
         // Add more options for generated outfits
         this.addMoreOptionsToOutfit(outfitItem, outfit, index);
@@ -544,6 +832,9 @@
 
     // Wardrobe Management
     async loadWardrobe() {
+      // Run cleanup before loading wardrobe
+      await this.cleanupWardrobe();
+      
       const { clothingItems = [] } = await CTO.storage.get('clothingItems');
       this.clothingItems = clothingItems;
       this.displayWardrobe();
@@ -578,6 +869,7 @@
         const wardrobeItem = document.createElement('div');
         wardrobeItem.className = 'outfit-item';
         wardrobeItem.style.position = 'relative';
+        wardrobeItem.setAttribute('data-item-id', item.url);
 
         // Create image container div
         const imgContainer = document.createElement('div');
@@ -604,8 +896,10 @@
 
         // Add click handler for image to open viewer
         img.onclick = (e) => {
-          // Only open viewer if not clicking on buttons
-          if (!e.target.closest('.add-to-outfit-btn') && !e.target.closest('.more-options-btn')) {
+          // Only open viewer if not clicking on buttons or multi-select checkbox
+          if (!e.target.closest('.add-to-outfit-btn') && 
+              !e.target.closest('.more-options-btn') && 
+              !e.target.closest('.multi-select-checkbox')) {
             if (global.CTO?.imageViewer?.viewer) {
               global.CTO.imageViewer.viewer.openImageViewer(item.url, {
                 type: 'Clothing Item',
@@ -618,6 +912,12 @@
             }
           }
         };
+
+        // Add multi-select checkbox
+        if (CTO.multiSelect?.manager) {
+          const checkbox = CTO.multiSelect.manager.createMultiSelectCheckbox(item.url, 'wardrobe', item);
+          wardrobeItem.appendChild(checkbox);
+        }
 
         // Add more options button and dropdown
         if (item.source?.url || global.CTO?.imageViewer?.viewer) {
@@ -642,6 +942,10 @@
 
       wardrobeForOutfit.innerHTML = '';
 
+      // Ensure we have the latest cleaned wardrobe data
+      const { clothingItems = [] } = await CTO.storage.get('clothingItems');
+      this.clothingItems = clothingItems;
+
       if (this.clothingItems.length === 0) {
         if (noWardrobeForOutfit) noWardrobeForOutfit.style.display = 'block';
         return;
@@ -653,6 +957,7 @@
         const wardrobeItem = document.createElement('div');
         wardrobeItem.className = 'outfit-item';
         wardrobeItem.style.position = 'relative';
+        wardrobeItem.setAttribute('data-item-id', item.url);
 
         // Create image container div
         const imgContainer = document.createElement('div');
@@ -683,8 +988,10 @@
 
         // Add click handler for image to open viewer
         img.onclick = (e) => {
-          // Only open viewer if not clicking on buttons
-          if (!e.target.closest('.add-to-outfit-btn') && !e.target.closest('.more-options-btn')) {
+          // Only open viewer if not clicking on buttons or multi-select checkbox
+          if (!e.target.closest('.add-to-outfit-btn') && 
+              !e.target.closest('.more-options-btn') && 
+              !e.target.closest('.multi-select-checkbox')) {
             if (global.CTO?.imageViewer?.viewer) {
               const wardrobeCollection = this.clothingItems.map((wardrobeItem, idx) => ({
                 url: wardrobeItem.url,
@@ -704,6 +1011,12 @@
             }
           }
         };
+
+        // Add multi-select checkbox
+        if (CTO.multiSelect?.manager) {
+          const checkbox = CTO.multiSelect.manager.createMultiSelectCheckbox(item.url, 'wardrobe-for-outfit', item);
+          wardrobeItem.appendChild(checkbox);
+        }
 
         // Add more options button and dropdown
         if (item.source?.url || global.CTO?.imageViewer?.viewer) {
@@ -851,13 +1164,14 @@ Would you like to clear some data to free up space?`;
 
     async showStorageClearOptions() {
       const options = [
+        'Remove duplicate items from wardrobe',
         'Clear oldest generated outfits',
         'Clear all generated outfits', 
         'Clear clothing items (wardrobe)',
         'Clear everything (reset app)'
       ];
       
-      const choice = prompt(`Choose what to clear:\n${options.map((opt, i) => `${i + 1}. ${opt}`).join('\n')}\n\nEnter number (1-4):`);
+      const choice = prompt(`Choose what to clear:\n${options.map((opt, i) => `${i + 1}. ${opt}`).join('\n')}\n\nEnter number (1-5):`);
       
       if (!choice) return;
       
@@ -865,15 +1179,18 @@ Would you like to clear some data to free up space?`;
       if (index >= 0 && index < options.length) {
         switch (index) {
           case 0:
-            await this.clearOldestOutfits();
+            await this.manualCleanupWardrobe();
             break;
           case 1:
-            await this.clearAllOutfits();
+            await this.clearOldestOutfits();
             break;
           case 2:
-            await this.clearClothingItems();
+            await this.clearAllOutfits();
             break;
           case 3:
+            await this.clearClothingItems();
+            break;
+          case 4:
             await this.clearAllData();
             break;
         }
@@ -942,6 +1259,53 @@ Would you like to clear some data to free up space?`;
         
         if (global.toastManager) {
           global.toastManager.success('App Reset', 'All data cleared - app has been reset');
+        }
+      }
+    }
+
+    // Manual cleanup function that can be called by users
+    async manualCleanupWardrobe() {
+      try {
+        const { clothingItems = [] } = await CTO.storage.get('clothingItems');
+        const originalCount = clothingItems.length;
+        
+        if (originalCount === 0) {
+          if (global.toastManager) {
+            global.toastManager.info('Nothing to Clean', 'Your wardrobe is empty');
+          }
+          return;
+        }
+        
+        // Force cleanup
+        await this.cleanupWardrobe();
+        
+        // Refresh all displays
+        await this.loadWardrobe();
+        await this.loadWardrobeForOutfit();
+        
+        const { clothingItems: cleanedItems = [] } = await CTO.storage.get('clothingItems');
+        const duplicatesRemoved = originalCount - cleanedItems.length;
+        
+        if (duplicatesRemoved > 0) {
+          if (global.toastManager) {
+            global.toastManager.success('Cleanup Complete', `Removed ${duplicatesRemoved} duplicate item${duplicatesRemoved !== 1 ? 's' : ''} from wardrobe`, {
+              icon: '🧹',
+              duration: 4000
+            });
+          }
+        } else {
+          if (global.toastManager) {
+            global.toastManager.info('No Duplicates Found', 'Your wardrobe is already clean!', {
+              icon: '✨',
+              duration: 3000
+            });
+          }
+        }
+        
+      } catch (error) {
+        console.error('Error during manual wardrobe cleanup:', error);
+        if (global.toastManager) {
+          global.toastManager.error('Cleanup Failed', 'Could not clean up wardrobe');
         }
       }
     }

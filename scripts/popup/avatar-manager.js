@@ -35,10 +35,17 @@
     }
 
     // Avatar Generation
-    populateGenderSelection(savedGender) {
-      if (savedGender) {
-        const radio = document.querySelector(`input[name="gender"][value="${savedGender}"]`);
-        if (radio) radio.checked = true;
+    populateModifiers(savedModifiers) {
+      if (savedModifiers) {
+        const heightInput = document.getElementById('height-modifier');
+        const weightInput = document.getElementById('weight-modifier');
+        const ageInput = document.getElementById('age-modifier');
+        const sexInput = document.getElementById('sex-modifier');
+        
+        if (heightInput && savedModifiers.height) heightInput.value = savedModifiers.height;
+        if (weightInput && savedModifiers.weight) weightInput.value = savedModifiers.weight;
+        if (ageInput && savedModifiers.age) ageInput.value = savedModifiers.age;
+        if (sexInput && savedModifiers.sex) sexInput.value = savedModifiers.sex;
       }
     }
 
@@ -137,13 +144,21 @@
       generateLoading.style.display = 'inline-block';
 
       try {
-        // Save gender preference
-        const genderInput = document.querySelector('input[name="gender"]:checked');
-        if (!genderInput) {
-          throw new Error('Please select a gender option');
-        }
-        const gender = genderInput.value;
-        await CTO.storage.set({ userGender: gender });
+        // Collect modifier values
+        const heightInput = document.getElementById('height-modifier');
+        const weightInput = document.getElementById('weight-modifier');
+        const ageInput = document.getElementById('age-modifier');
+        const sexInput = document.getElementById('sex-modifier');
+        
+        const modifiers = {
+          height: heightInput ? heightInput.value.trim() : '',
+          weight: weightInput ? weightInput.value.trim() : '',
+          age: ageInput ? ageInput.value.trim() : '',
+          sex: sexInput ? sexInput.value.trim() : ''
+        };
+        
+        // Save modifier preferences
+        await CTO.storage.set({ userModifiers: modifiers });
 
         // Validate formats
         const allImages = this.uploadedPhotos.every(f => f.type && f.type.startsWith('image/'));
@@ -168,7 +183,7 @@
         const photoDataArray = await Promise.all(photoPromises);
 
         // Generate avatar using Gemini API
-        const result = await CTO.api.callAvatarGenerationAPI(photoDataArray, CTO.storage.get.bind(CTO.storage));
+        const result = await CTO.api.callAvatarGenerationAPI(photoDataArray, CTO.storage.get.bind(CTO.storage), modifiers);
 
         // Handle partial success
         if (result.partialSuccess) {
@@ -382,6 +397,21 @@
 
         const photoDataArray = await Promise.all(photoPromises);
 
+        // Get saved modifiers for consistent generation
+        const { userModifiers } = await CTO.storage.get('userModifiers');
+        const savedModifiers = userModifiers || {};
+        
+        // Build modifier text from saved modifiers
+        let modifierText = '';
+        if (savedModifiers.height || savedModifiers.weight || savedModifiers.age || savedModifiers.sex) {
+          const parts = [];
+          if (savedModifiers.height) parts.push(`height: ${savedModifiers.height}`);
+          if (savedModifiers.weight) parts.push(`weight: ${savedModifiers.weight}`);
+          if (savedModifiers.age) parts.push(`age: ${savedModifiers.age}`);
+          if (savedModifiers.sex) parts.push(`sex: ${savedModifiers.sex}`);
+          modifierText = parts.length > 0 ? `\n\nPERSON CHARACTERISTICS:\n- ${parts.join('\n- ')}` : '';
+        }
+
         // Create a specific prompt for this pose
         const posePrompts = {
           'front-neutral': 'Generate 1 realistic avatar image of this person in a neutral front-facing pose: standing, facing the camera directly, arms relaxed at sides.',
@@ -391,7 +421,7 @@
         };
 
         const specificPrompt = posePrompts[avatar.pose] || posePrompts['front-neutral'];
-        const fullPrompt = `${specificPrompt} Use the provided photos to capture identity, face, hairstyle, body type, and skin tone. Dress in plain white/grey T-shirt, black/grey/neutral shorts (not long pants), neutral shoes if visible. The shorts should be mid-thigh length for optimal outfit layering. Use a plain white background. Generate a high-resolution, realistic photo result.\n\nIMAGE SPECIFICATIONS:\n- Generate the image in portrait orientation with dimensions 768 pixels wide by 1152 pixels tall\n- Use JPEG format for the output image\n- Ensure high quality and clarity at these specific dimensions`;
+        const fullPrompt = `${specificPrompt} Use the provided photos to capture identity, face, hairstyle, body type, and skin tone. Dress in plain white/grey T-shirt, black/grey/neutral shorts (not long pants), neutral shoes if visible. The shorts should be mid-thigh length for optimal outfit layering. Use a plain white background. Generate a high-resolution, realistic photo result.${modifierText}\n\nIMAGE SPECIFICATIONS:\n- Generate the image in portrait orientation with dimensions 768 pixels wide by 1152 pixels tall\n- Use JPEG format for the output image\n- Ensure high quality and clarity at these specific dimensions`;
 
         // Call API for single pose
         const result = await this.generateSinglePose(photoDataArray, fullPrompt);

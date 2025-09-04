@@ -37,14 +37,26 @@
     }
   };
 
-  ns.api.callAvatarGenerationAPI = async function callAvatarGenerationAPI(photoDataArray, getApiKey) {
+  ns.api.callAvatarGenerationAPI = async function callAvatarGenerationAPI(photoDataArray, getApiKey, modifiers = {}) {
     const API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent';
     const { apiKey } = await getApiKey('apiKey');
+    
+    // Build modifier text from provided modifiers
+    let modifierText = '';
+    if (modifiers.height || modifiers.weight || modifiers.age || modifiers.sex) {
+      const parts = [];
+      if (modifiers.height) parts.push(`height: ${modifiers.height}`);
+      if (modifiers.weight) parts.push(`weight: ${modifiers.weight}`);
+      if (modifiers.age) parts.push(`age: ${modifiers.age}`);
+      if (modifiers.sex) parts.push(`sex: ${modifiers.sex}`);
+      modifierText = parts.length > 0 ? `\n\nPERSON CHARACTERISTICS:\n- ${parts.join('\n- ')}` : '';
+    }
+    
     const contents = [
       {
         role: 'user',
         parts: [
-          { text: 'Generate 4 realistic avatar images of this person in neutral clothing on a white background. Use the provided photos to capture identity, face, hairstyle, body type, and skin tone. Dress in plain white/grey T-shirt, black/grey/neutral shorts (not long pants), neutral shoes if visible. The shorts should be mid-thigh length for optimal outfit layering. Output 4 separate images: 1) Neutral front-facing standing, 2) Front-facing open stance, 3) Three-quarter angle, 4) Side profile. Each should be high-resolution and realistic.\n\nIMAGE SPECIFICATIONS:\n- Generate images in portrait orientation with dimensions 768 pixels wide by 1152 pixels tall\n- Use JPEG format for the output images\n- Ensure high quality and clarity at these specific dimensions' },
+          { text: `Generate 4 realistic avatar images of this person in neutral clothing on a white background. Use the provided photos to capture identity, face, hairstyle, body type, and skin tone. Dress in plain white/grey T-shirt, black/grey/neutral shorts (not long pants), neutral shoes if visible. The shorts should be mid-thigh length for optimal outfit layering. Output 4 separate images: 1) Neutral front-facing standing, 2) Front-facing open stance, 3) Three-quarter angle, 4) Side profile. Each should be high-resolution and realistic.${modifierText}\n\nIMAGE SPECIFICATIONS:\n- Generate images in portrait orientation with dimensions 768 pixels wide by 1152 pixels tall\n- Use JPEG format for the output images\n- Ensure high quality and clarity at these specific dimensions` },
           ...photoDataArray.map(data => ({ inlineData: { mimeType: 'image/jpeg', data } }))
         ]
       }

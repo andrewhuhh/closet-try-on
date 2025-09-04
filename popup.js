@@ -6,27 +6,24 @@ class ClosetTryOn {
     this.apiKey = null;
     this.toastManager = null;
     this.setupComplete = false;
+    this.notificationMode = false;
+    this.notificationData = null;
   }
 
   async init() {
     try {
-      // Initialize Toast Manager first (using the modular version)
-      if (window.ToastManager) {
-        this.toastManager = new window.ToastManager();
-        window.toastManager = this.toastManager;
+      // Check if we should start in notification mode
+      await this.checkNotificationMode();
+
+      if (!this.notificationMode) {
+        // Initialize full popup
+        await this.initializeFullPopup();
+      } else {
+        // Setup minimal event listeners for notification mode
+        this.setupNotificationEventListeners();
+        console.log('ClosetTryOn extension initialized in notification mode');
+        return; // Exit early for notification mode
       }
-
-      // Initialize all modules
-      await this.initializeModules();
-
-      // Setup event listeners
-      this.setupEventListeners();
-
-      // Setup drag and drop
-      this.setupDragAndDrop();
-
-      // Check setup status and show appropriate section
-      await this.checkSetupStatus();
 
       this.setupComplete = true;
       console.log('ClosetTryOn extension initialized successfully');
@@ -34,6 +31,63 @@ class ClosetTryOn {
       console.error('Error initializing ClosetTryOn extension:', error);
       this.showError('Failed to initialize extension. Please refresh and try again.');
     }
+  }
+
+  async loadFullPopupScripts() {
+    // Scripts to load for full popup functionality
+    const scripts = [
+      'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
+      'scripts/common/image-utils.js',
+      'scripts/popup/api.js',
+      'scripts/popup/toast.js',
+      'scripts/popup/ui-manager.js',
+      'scripts/popup/avatar-manager.js',
+      'scripts/popup/multi-select-manager.js',
+      'scripts/popup/outfit-manager.js',
+      'scripts/popup/image-viewer.js',
+      'scripts/popup/generation-monitor.js'
+    ];
+
+    // Load scripts sequentially to maintain dependency order
+    for (const src of scripts) {
+      await this.loadScript(src);
+    }
+  }
+
+  loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = src;
+      script.onload = resolve;
+      script.onerror = () => {
+        console.warn(`Failed to load script: ${src}`);
+        resolve(); // Continue even if a script fails to load
+      };
+      document.head.appendChild(script);
+    });
+  }
+
+  async initializeFullPopup() {
+    // Load additional scripts needed for full popup
+    await this.loadFullPopupScripts();
+    
+    // Initialize Toast Manager first (using the modular version)
+    if (window.ToastManager) {
+      this.toastManager = new window.ToastManager();
+      window.toastManager = this.toastManager;
+    }
+
+    // Initialize all modules
+    await this.initializeModules();
+
+    // Setup event listeners
+    this.setupEventListeners();
+
+    // Setup drag and drop
+    this.setupDragAndDrop();
+
+    // Check setup status and show appropriate section
+    await this.checkSetupStatus();
   }
 
   async initializeModules() {
@@ -69,12 +123,18 @@ class ClosetTryOn {
     if (CTO.generation?.monitor) {
       console.log('Generation Monitor ready (auto-initialized)');
     }
+
+    // Initialize Multi-Select Manager
+    if (CTO.multiSelect?.manager) {
+      CTO.multiSelect.manager.init();
+      console.log('Multi-Select Manager initialized');
+    }
   }
 
   async checkSetupStatus() {
     try {
-      const { apiKey, avatarGenerated, userGender } = await CTO.storage.get([
-        'apiKey', 'avatarGenerated', 'userGender'
+      const { apiKey, avatarGenerated, userModifiers } = await CTO.storage.get([
+        'apiKey', 'avatarGenerated', 'userModifiers'
       ]);
 
       this.apiKey = apiKey;
@@ -86,7 +146,7 @@ class ClosetTryOn {
         // API key exists but no avatar - show avatar setup
         CTO.ui.manager.showSection('avatar-section');
         if (CTO.avatar.manager) {
-          CTO.avatar.manager.populateGenderSelection(userGender);
+          CTO.avatar.manager.populateModifiers(userModifiers);
           
           // Show back button if we have avatars (user is returning from main interface)
           const avatars = CTO.avatar.manager.avatars;
@@ -116,6 +176,270 @@ class ClosetTryOn {
       console.error('Error checking setup status:', error);
       this.showError('Error loading extension state');
     }
+  }
+
+  async checkNotificationMode() {
+    try {
+      // Check if there's pending notification data
+      const { notificationData } = await chrome.storage.local.get('notificationData');
+      if (notificationData) {
+        this.notificationMode = true;
+        this.notificationData = notificationData;
+        
+        // Ensure main container is hidden from the start
+        const containerEl = document.querySelector('.container');
+        if (containerEl) {
+          containerEl.style.display = 'none';
+          containerEl.classList.add('hidden');
+        }
+        
+        this.showNotificationMode(notificationData);
+        // Clear the notification data from storage
+        await chrome.storage.local.remove('notificationData');
+        
+        console.log('Notification mode activated:', notificationData);
+      } else {
+        // Ensure notification mode is hidden
+        const notificationModeEl = document.getElementById('notification-mode');
+        if (notificationModeEl) {
+          notificationModeEl.classList.add('hidden');
+          notificationModeEl.style.display = 'none';
+        }
+        
+        // Ensure main container is visible
+        const containerEl = document.querySelector('.container');
+        if (containerEl) {
+          containerEl.style.display = '';
+          containerEl.classList.remove('hidden');
+        }
+      }
+    } catch (error) {
+      console.error('Error checking notification mode:', error);
+    }
+  }
+
+  showNotificationMode(data) {
+    const notificationModeEl = document.getElementById('notification-mode');
+    const containerEl = document.querySelector('.container');
+    
+    if (!notificationModeEl) {
+      console.error('Notification mode element not found');
+      return;
+    }
+
+    // Ensure main container is completely hidden
+    if (containerEl) {
+      containerEl.style.display = 'none';
+      containerEl.classList.add('hidden');
+    }
+
+    // Populate notification content
+    const titleEl = document.getElementById('notification-title');
+    const messageEl = document.getElementById('notification-message');
+    const emojiEl = document.getElementById('notification-emoji');
+    const iconEl = document.querySelector('.notification-icon');
+    const primaryActionEl = document.getElementById('notification-primary-action');
+    const imageEl = document.getElementById('notification-image');
+
+    // Set content with fallbacks
+    if (titleEl) titleEl.textContent = data.title || 'Notification';
+    if (messageEl) messageEl.textContent = data.message || '';
+    if (emojiEl) emojiEl.textContent = data.icon || '📢';
+    
+    // Set notification image if provided
+    if (imageEl && data.imageUrl) {
+      imageEl.src = data.imageUrl;
+      imageEl.style.display = 'block';
+      imageEl.alt = data.title || 'Notification Image';
+      
+      // Handle image loading errors
+      imageEl.onerror = () => {
+        console.warn('Failed to load notification image:', data.imageUrl);
+        imageEl.style.display = 'none';
+      };
+      
+      // Show the image container
+      const imageContainer = imageEl.parentElement;
+      if (imageContainer) {
+        imageContainer.style.display = 'block';
+      }
+    } else if (imageEl) {
+      // Hide image if no URL provided
+      imageEl.style.display = 'none';
+      const imageContainer = imageEl.parentElement;
+      if (imageContainer) {
+        imageContainer.style.display = 'none';
+      }
+    }
+    
+    // Set icon type styling
+    if (iconEl && data.type) {
+      iconEl.className = `notification-icon ${data.type}`;
+    }
+
+    // Configure primary action button
+    if (primaryActionEl) {
+      if (data.actionText) {
+        primaryActionEl.textContent = data.actionText;
+        primaryActionEl.style.display = 'block';
+      } else {
+        primaryActionEl.style.display = 'none';
+      }
+    }
+
+    // Show notification mode
+    notificationModeEl.classList.remove('hidden');
+    notificationModeEl.style.display = 'block';
+
+    // Force html and body to adjust to notification content height
+    setTimeout(() => {
+      const notificationHeight = notificationModeEl.offsetHeight;
+      
+      // Set height on both html and body elements
+      document.documentElement.style.height = `${notificationHeight}px`;
+      document.documentElement.style.minHeight = `${notificationHeight}px`;
+      document.documentElement.style.maxHeight = `${notificationHeight}px`;
+      
+      document.body.style.height = `${notificationHeight}px`;
+      document.body.style.minHeight = `${notificationHeight}px`;
+      document.body.style.maxHeight = `${notificationHeight}px`;
+    }, 50);
+
+    console.log('Showing notification mode:', data);
+  }
+
+  setupNotificationEventListeners() {
+    
+    // Primary action
+    this.bindEvent('notification-primary-action', 'click', () => this.handleNotificationAction());
+    
+    // Dismiss notification
+    this.bindEvent('dismiss-notification', 'click', () => this.dismissNotification());
+
+    // Click anywhere on notification header to expand
+    const header = document.querySelector('.notification-header');
+    if (header) {
+      header.addEventListener('click', (e) => {
+        // Don't expand if clicking on action buttons
+        if (!e.target.closest('button')) {
+          this.expandToFullPopup();
+        }
+      });
+    }
+  }
+
+  async expandToFullPopup() {
+    console.log('Expanding to full popup');
+    
+    // Store the tab we want to open to if specified
+    if (this.notificationData && this.notificationData.actionType) {
+      const tabMap = {
+        'view-wardrobe': 'wardrobe',
+        'view-outfits': 'outfits',
+        'view-latest': 'try-on'
+      };
+      
+      const targetTab = tabMap[this.notificationData.actionType];
+      if (targetTab) {
+        await chrome.storage.local.set({ openToTab: targetTab });
+      }
+    }
+
+    // Hide notification mode
+    const notificationModeEl = document.getElementById('notification-mode');
+    const containerEl = document.querySelector('.container');
+    
+    if (notificationModeEl) {
+      notificationModeEl.classList.add('hidden');
+      notificationModeEl.style.display = 'none';
+    }
+    
+    // Show main container
+    if (containerEl) {
+      containerEl.style.display = '';
+      containerEl.classList.remove('hidden');
+    }
+
+    // Restore html and body height for full popup
+    document.documentElement.style.height = '';
+    document.documentElement.style.minHeight = '';
+    document.documentElement.style.maxHeight = '';
+    
+    document.body.style.height = '';
+    document.body.style.minHeight = '';
+    document.body.style.maxHeight = '';
+
+    // Exit notification mode and initialize normal popup
+    this.notificationMode = false;
+    this.notificationData = null;
+    
+    // Initialize the full popup instead of reloading
+    try {
+      if (!this.setupComplete) {
+        await this.initializeFullPopup();
+        this.setupComplete = true;
+      } else {
+        // Just check setup status and update UI
+        await this.checkSetupStatus();
+      }
+    } catch (error) {
+      console.error('Error expanding to full popup:', error);
+      // Fallback to reload if initialization fails
+      window.location.reload();
+    }
+  }
+
+  async handleNotificationAction() {
+    console.log('Handling notification action:', this.notificationData?.actionType);
+    
+    if (this.notificationData?.actionType) {
+      switch (this.notificationData.actionType) {
+        case 'view-wardrobe':
+          await chrome.storage.local.set({ openToTab: 'wardrobe' });
+          break;
+        case 'view-outfits':
+          await chrome.storage.local.set({ openToTab: 'outfits' });
+          break;
+        case 'view-latest':
+          await chrome.storage.local.set({ openToTab: 'try-on' });
+          break;
+        case 'open-url':
+          if (this.notificationData.actionData?.url) {
+            chrome.tabs.create({ url: this.notificationData.actionData.url });
+            window.close();
+            return;
+          }
+          break;
+        case 'open-tab':
+          // Just expand to full popup for general extension access
+          break;
+      }
+    }
+    
+    // Expand to full popup
+    await this.expandToFullPopup();
+  }
+
+  dismissNotification() {
+    console.log('Dismissing notification');
+    window.close();
+  }
+
+  // Debug function to test notification mode
+  testNotificationMode() {
+    const testData = {
+      title: 'Test Notification',
+      message: 'This is a test notification to verify the system works correctly.',
+      type: 'info',
+      icon: '🧪',
+      actionText: 'View Extension',
+      actionType: 'open-tab'
+    };
+    
+    this.notificationMode = true;
+    this.notificationData = testData;
+    this.showNotificationMode(testData);
+    this.setupNotificationEventListeners();
   }
 
   async checkNotificationTabRequest() {
@@ -218,9 +542,11 @@ class ClosetTryOn {
     // Try on outfit button
     this.bindEvent('try-on-outfit', 'click', () => this.delegateToOutfitManager('tryOnCurrentOutfit'));
 
-    // Size preference change handlers
-    this.bindEvent('size-fit', 'change', () => this.saveSizePreference('fit'));
-    this.bindEvent('size-retain', 'change', () => this.saveSizePreference('retain'));
+    // Size preference toggle handler
+    this.bindEvent('size-toggle', 'change', (e) => {
+      const preference = e.target.checked ? 'fit' : 'retain';
+      this.saveSizePreference(preference);
+    });
     
     // Load initial size preference
     this.loadSizePreference();
@@ -510,21 +836,49 @@ class ClosetTryOn {
     try {
       const { sizePreference = 'fit' } = await CTO.storage.get('sizePreference');
       
-      // Update radio buttons to reflect saved preference
-      const fitRadio = document.getElementById('size-fit');
-      const retainRadio = document.getElementById('size-retain');
+      // Update toggle switch to reflect saved preference
+      const sizeToggle = document.getElementById('size-toggle');
       
-      if (fitRadio && retainRadio) {
-        fitRadio.checked = sizePreference === 'fit';
-        retainRadio.checked = sizePreference === 'retain';
+      if (sizeToggle) {
+        sizeToggle.checked = sizePreference === 'fit';
+        console.log(`Size preference loaded: ${sizePreference}, toggle checked: ${sizeToggle.checked}`);
       }
       
-      console.log(`Size preference loaded: ${sizePreference}`);
     } catch (error) {
       console.error('Error loading size preference:', error);
       // Default to 'fit' on error
-      const fitRadio = document.getElementById('size-fit');
-      if (fitRadio) fitRadio.checked = true;
+      const sizeToggle = document.getElementById('size-toggle');
+      if (sizeToggle) {
+        sizeToggle.checked = true;
+        console.log('Error loading preference, defaulted to fit (checked: true)');
+      }
+    }
+  }
+
+  updateNotificationImage(imageUrl) {
+    if (!this.notificationMode) {
+      console.log('Not in notification mode, ignoring image update');
+      return;
+    }
+
+    const imageEl = document.getElementById('notification-image');
+    if (imageEl && imageUrl) {
+      console.log('Updating notification image with:', imageUrl);
+      imageEl.src = imageUrl;
+      imageEl.style.display = 'block';
+      imageEl.alt = 'Clothing Item';
+      
+      // Handle image loading errors
+      imageEl.onerror = () => {
+        console.warn('Failed to load updated notification image:', imageUrl);
+        imageEl.style.display = 'none';
+      };
+      
+      // Show the image container
+      const imageContainer = imageEl.parentElement;
+      if (imageContainer) {
+        imageContainer.style.display = 'block';
+      }
     }
   }
 }
@@ -545,6 +899,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Refresh the gallery to show existing items
     if (CTO.outfit.manager) {
       CTO.outfit.manager.loadOutfits();
+    }
+  } else if (message.action === 'updateNotificationImage') {
+    // Update notification image if in notification mode
+    if (window.closetTryOn && window.closetTryOn.notificationMode) {
+      window.closetTryOn.updateNotificationImage(message.imageUrl);
     }
     sendResponse({ success: true });
   } else if (message.action === 'generationStatusChanged') {
@@ -590,4 +949,7 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Store global reference for debugging
   window.closetTryOnExtension = extension;
+  
+  // Add debug functions to window for testing
+  window.testNotification = () => extension.testNotificationMode();
 }); 

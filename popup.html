@@ -5,6 +5,32 @@
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
+    <!-- Notification Mode Container (minimized popup state) -->
+    <div id="notification-mode" class="notification-mode hidden">
+      <div class="notification-content">
+        <div class="notification-image">
+          <img id="notification-image" src="" alt="Notification Image">
+        </div>
+        <div class="notification-text-content">
+          <div class="notification-header">
+            <div class="notification-text">
+              <div class="notification-title" id="notification-title"></div>
+              <div class="notification-message" id="notification-message"></div>
+            </div>
+          </div>
+          <div class="notification-actions">
+            <button id="notification-primary-action" class="notification-action-btn primary" style="display: none;">
+              <!-- Action text will be set programmatically -->
+            </button>
+            <button id="dismiss-notification" class="notification-action-btn secondary">
+              Dismiss
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Container -->
     <div class="container">
 
       <div class="header-section">
@@ -64,18 +90,30 @@
         <p>Upload 3+ photos of yourself to generate your avatar models.</p>
 
         <div class="form-group">
-          <label>Gender (for sample outfit):</label>
-          <div class="radio-group">
-            <label class="radio-option">
-              <input type="radio" name="gender" value="male" checked> Male
-            </label>
-            <label class="radio-option">
-              <input type="radio" name="gender" value="female"> Female
-            </label>
-            <label class="radio-option">
-              <input type="radio" name="gender" value="other"> Other
-            </label>
+          <label>Personal Characteristics (optional):</label>
+          <div class="modifier-inputs">
+            <div class="modifier-row">
+              <div class="modifier-field">
+                <label for="height-modifier">Height:</label>
+                <input type="text" id="height-modifier" placeholder="e.g., 5'8&quot;, 175cm">
+              </div>
+              <div class="modifier-field">
+                <label for="weight-modifier">Weight:</label>
+                <input type="text" id="weight-modifier" placeholder="e.g., 150lbs, 68kg">
+              </div>
+            </div>
+            <div class="modifier-row">
+              <div class="modifier-field">
+                <label for="age-modifier">Age:</label>
+                <input type="text" id="age-modifier" placeholder="e.g., 25, 30 years old">
+              </div>
+              <div class="modifier-field">
+                <label for="sex-modifier">Sex:</label>
+                <input type="text" id="sex-modifier" placeholder="e.g., male, female, non-binary">
+              </div>
+            </div>
           </div>
+          <small>These help generate more accurate avatars. All fields are optional.</small>
         </div>
 
         <div class="file-upload" id="photo-upload">
@@ -126,9 +164,27 @@
             <div class="loading-widget-content">
               <div class="loading-spinner-small"></div>
               <div class="loading-text">
-                <span class="loading-title">🎨 Generating Your Try-On...</span>
+                <span class="loading-title">Creating Your Look...</span>
                 <span class="loading-time">Elapsed: <span id="outfit-elapsed-time">0s</span></span>
               </div>
+            </div>
+          </div>
+          
+          <!-- Mass Actions Bar for Outfits -->
+          <div id="outfits-mass-actions" class="mass-actions-bar">
+            <div class="mass-actions-info">
+              <span class="selected-count">0</span>
+            </div>
+            <div class="mass-actions-buttons">
+              <button class="mass-action-btn clear" id="outfits-clear-selection">
+                Clear
+              </button>
+              <button class="mass-action-btn download" id="outfits-mass-download">
+                Download
+              </button>
+              <button class="mass-action-btn delete" id="outfits-mass-delete">
+                Delete
+              </button>
             </div>
           </div>
           
@@ -146,24 +202,31 @@
           
           <div class="outfit-builder-section">
             <div class="current-outfit">
-              <span class="subtitle">Current Outfit (<span id="outfit-item-count">0</span> items)</span>
-              
-              <div id="current-outfit-items" class="outfit-items-grid">
-                <!-- Current outfit items will be displayed here -->
+              <div class="outfit-header-row">
+                <span class="subtitle">Current Outfit (<span id="outfit-item-count">0</span> items)</span>
+                
+                <div class="size-toggle-container" title="Keep Original: Keep clothing at original size/proportions. Fit to Avatar: Resize clothes to match your avatar's proportions">
+                  <span class="size-toggle-label">Keep</span>
+                  <label class="size-toggle-switch">
+                    <input type="checkbox" id="size-toggle" checked>
+                    <span class="size-toggle-slider"></span>
+                  </label>
+                  <span class="size-toggle-label">Fit</span>
+                </div>
               </div>
               
-              <div class="size-preference-section" style="margin: 12px 0;">
-                <label class="size-preference-label">Size Fitting:</label>
-                <div class="size-preference-toggle">
-                  <input type="radio" id="size-fit" name="sizePreference" value="fit" checked>
-                  <label for="size-fit" class="size-option">Fit to Avatar</label>
-                  <input type="radio" id="size-retain" name="sizePreference" value="retain">
-                  <label for="size-retain" class="size-option">Retain Original</label>
+              <div id="current-outfit-items" class="outfit-items-container">
+                <div class="outfit-avatar-display">
+                  <div id="outfit-avatar-image" class="avatar-preview">
+                    <!-- Selected avatar will be displayed here -->
+                  </div>
+                  <div class="avatar-info">
+                    <span class="avatar-label">Your Avatar</span>
+                  </div>
                 </div>
-                <small class="size-preference-help">
-                  Fit to Avatar: Resize clothes to match your avatar's proportions<br>
-                  Retain Original: Keep clothing at original size/proportions
-                </small>
+                <div class="outfit-items-grid">
+                  <!-- Current outfit items will be displayed here (max 4) -->
+                </div>
               </div>
               
               <div class="outfit-actions">
@@ -178,6 +241,25 @@
             
             <div class="add-to-outfit-section" style="margin-top: 24px;">
               <h4>Add Items from Wardrobe</h4>
+              
+              <!-- Mass Actions Bar for Wardrobe in Outfit Builder -->
+              <div id="wardrobe-for-outfit-mass-actions" class="mass-actions-bar">
+                <div class="mass-actions-info">
+                  <span class="selected-count">0</span>
+                </div>
+                <div class="mass-actions-buttons">
+                  <button class="mass-action-btn clear" id="wardrobe-for-outfit-clear-selection">
+                    Clear
+                  </button>
+                  <button class="mass-action-btn download" id="wardrobe-for-outfit-mass-download">
+                    Download
+                  </button>
+                  <button class="mass-action-btn delete" id="wardrobe-for-outfit-mass-delete">
+                    Delete
+                  </button>
+                </div>
+              </div>
+              
               <div id="wardrobe-for-outfit" class="outfit-gallery">
                 <!-- Wardrobe items for adding to outfit will be displayed here -->
               </div>
@@ -191,6 +273,25 @@
         <!-- Wardrobe Tab -->
         <div id="wardrobe-tab" class="tabs">
           <h3>Saved Clothing Items</h3>
+          
+          <!-- Mass Actions Bar for Wardrobe -->
+          <div id="wardrobe-mass-actions" class="mass-actions-bar">
+            <div class="mass-actions-info">
+              <span class="selected-count">0</span>
+            </div>
+            <div class="mass-actions-buttons">
+              <button class="mass-action-btn clear" id="wardrobe-clear-selection">
+                Clear
+              </button>
+              <button class="mass-action-btn download" id="wardrobe-mass-download">
+                Download
+              </button>
+              <button class="mass-action-btn delete" id="wardrobe-mass-delete">
+                Delete
+              </button>
+            </div>
+          </div>
+          
           <div id="wardrobe-gallery" class="outfit-gallery">
             <!-- Saved clothing items will be displayed here -->
           </div>
@@ -408,22 +509,51 @@
       </div>
     </div>
 
+    <!-- Wardrobe Selection Popup -->
+    <div id="wardrobe-popup" class="modal-overlay hidden">
+      <div class="modal-content wardrobe-modal">
+        <div class="modal-header">
+          <h3>Add Item to Outfit</h3>
+          <button id="close-wardrobe-popup" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <!-- Mass Actions Bar for Wardrobe Popup -->
+          <div id="wardrobe-popup-mass-actions" class="mass-actions-bar">
+            <div class="mass-actions-info">
+              <span class="selected-count">0</span>
+            </div>
+            <div class="mass-actions-buttons">
+              <button class="mass-action-btn clear" id="wardrobe-popup-clear-selection">
+                Clear
+              </button>
+              <button class="mass-action-btn download" id="wardrobe-popup-mass-download">
+                Download
+              </button>
+              <button class="mass-action-btn delete" id="wardrobe-popup-mass-delete">
+                Delete
+              </button>
+            </div>
+          </div>
+          
+          <div id="wardrobe-popup-grid" class="wardrobe-popup-grid">
+            <!-- Wardrobe items will be populated here -->
+          </div>
+          <p id="no-wardrobe-popup" style="text-align: center; color: var(--text-2); margin: 24px 0; display: none;">
+            No clothing items in wardrobe. Right-click on clothing images and select "Add to Wardrobe" to save items!
+          </p>
+        </div>
+      </div>
+    </div>
+
     <!-- Load scripts in dependency order -->
-    <!-- 1. Common/Core modules first -->
+    <!-- Core scripts always needed -->
     <script src="scripts/common/namespace.js"></script>
     <script src="scripts/common/storage.js"></script>
-    <script src="scripts/common/image-utils.js"></script>
-    
-    <!-- 2. Popup modules -->
-    <script src="scripts/popup/api.js"></script>
-    <script src="scripts/popup/toast.js"></script>
-    <script src="scripts/popup/ui-manager.js"></script>
-    <script src="scripts/popup/avatar-manager.js"></script>
-    <script src="scripts/popup/outfit-manager.js"></script>
-    <script src="scripts/popup/image-viewer.js"></script>
-    <script src="scripts/popup/generation-monitor.js"></script>
-    
-    <!-- 3. Main entry point last -->
     <script src="popup.js"></script>
+    
+    <!-- Additional scripts loaded conditionally by popup.js -->
+    <script>
+      // This will be handled by popup.js to load additional scripts only when needed
+    </script>
   </body>
 </html>

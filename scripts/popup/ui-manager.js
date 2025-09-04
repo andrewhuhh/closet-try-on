@@ -23,7 +23,7 @@
         // Hide header-section for avatar management and api settings
         const headerSection = document.querySelector('.header-section');
         if (headerSection) {
-          if (sectionId === 'avatar-management-section' || sectionId === 'api-settings-section') {
+          if (sectionId === 'avatar-management-section' || sectionId === 'api-settings-section' || sectionId === 'api-update-section' || sectionId === 'avatar-section') {
             headerSection.style.display = 'none';
           } else {
             headerSection.style.display = '';

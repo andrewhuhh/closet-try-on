@@ -467,9 +467,9 @@
           const titleElement = loading.querySelector('.loading-title');
           if (titleElement) {
             if (loading.id === 'outfit-loading') {
-              titleElement.innerHTML = '🎨 Generating Your Try-On...';
+              titleElement.innerHTML = 'Creating Your Look...';
             } else if (loading.id === 'tryon-loading') {
-              titleElement.innerHTML = '✨ Creating Your Look...';
+              titleElement.innerHTML = 'Creating Your Look...';
             }
           }
         }

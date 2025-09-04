@@ -109,6 +109,17 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
+// Helper function to extract website name from URL
+function extractWebsiteName(url) {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.hostname.replace(/^www\./, ''); // Remove www. prefix if present
+  } catch (error) {
+    console.warn('Failed to extract website name from URL:', url, error);
+    return 'unknown website';
+  }
+}
+
 // Handle context menu clicks
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === 'addToOutfit' && info.srcUrl) {
@@ -119,16 +130,24 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       sourceFavicon: tab.favIconUrl
     });
     
-    // Show notification using our new notification system
+    // Extract website name for notification
+    const websiteName = extractWebsiteName(tab.url);
+    
+    // Show notification immediately with placeholder
     showNotification({
       title: 'Added to Wardrobe!',
-      message: 'Clothing item saved successfully',
+      message: `From ${websiteName}`,
       type: 'success',
       icon: '👕',
       duration: 3000,
       actionText: 'View Wardrobe',
-      actionType: 'view-wardrobe'
+      actionType: 'view-wardrobe',
+      imageUrl: null, // No image initially
+      websiteName: websiteName
     });
+    
+    // Process image in background and update notification
+    processImageForNotification(info.srcUrl);
   } 
   
   else if (info.menuItemId === 'tryItOn' && info.srcUrl) {
@@ -162,6 +181,24 @@ async function storeClothingImage(imageUrl, sourceInfo = null) {
   try {
     const { clothingItems = [] } = await storageGet('clothingItems');
     
+    // Check if this image URL is already in the wardrobe
+    const isAlreadyInWardrobe = clothingItems.some(item => item.url === imageUrl);
+    if (isAlreadyInWardrobe) {
+      console.log('Item already exists in wardrobe, skipping duplicate:', imageUrl);
+      
+      // Send notification about duplicate
+      if (chrome.notifications) {
+        chrome.notifications.create(`wardrobe-exists-${Date.now()}`, {
+          type: 'basic',
+          iconUrl: 'icons/128.png',
+          title: '📁 Already in Wardrobe',
+          message: 'This item is already saved in your wardrobe',
+          requireInteraction: false
+        });
+      }
+      return;
+    }
+    
     // Convert external URL to compressed data URL for storage
     let processedImageUrl;
     try {
@@ -186,6 +223,24 @@ async function storeClothingImage(imageUrl, sourceInfo = null) {
       processedImageUrl = imageUrl;
     }
     
+    // Double-check for duplicates with processed URL (extra safety)
+    const isDuplicateProcessed = clothingItems.some(item => item.url === processedImageUrl);
+    if (isDuplicateProcessed) {
+      console.log('Processed item already exists in wardrobe, skipping duplicate:', processedImageUrl);
+      
+      // Send notification about duplicate
+      if (chrome.notifications) {
+        chrome.notifications.create(`wardrobe-exists-${Date.now()}`, {
+          type: 'basic',
+          iconUrl: 'icons/128.png',
+          title: '📁 Already in Wardrobe',
+          message: 'This item is already saved in your wardrobe',
+          requireInteraction: false
+        });
+      }
+      return;
+    }
+    
     // Create clothing item with source information
     const clothingItem = {
       url: processedImageUrl,
@@ -205,6 +260,13 @@ async function storeClothingImage(imageUrl, sourceInfo = null) {
     clothingItems.push(clothingItem);
     
     await storageSet({ clothingItems });
+    
+    console.log('Successfully added new item to wardrobe:', {
+      url: processedImageUrl,
+      hasSource: !!sourceInfo,
+      totalItems: clothingItems.length
+    });
+    
   } catch (error) {
     console.error('Error storing clothing image:', error);
   }
@@ -433,6 +495,90 @@ async function imageUrlToBase64(imageUrl) {
     console.error('CORS/image fetch error:', err);
     throw err;
   }
+}
+
+// Process image for notification and update it when ready
+async function processImageForNotification(imageUrl) {
+  try {
+    // Try to convert to data URL to avoid CORS issues
+    const response = await fetch(imageUrl);
+    if (response.ok) {
+      const blob = await response.blob();
+      // Use a smaller compression for notifications
+      const compressedBlob = await compressImageForNotification(blob);
+      const notificationImageUrl = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.readAsDataURL(compressedBlob);
+      });
+      
+      // Update the notification with the processed image
+      updateNotificationImage(notificationImageUrl);
+    }
+  } catch (error) {
+    console.warn('Failed to process image for notification:', error);
+    // Could potentially update with original URL as fallback
+    // updateNotificationImage(imageUrl);
+  }
+}
+
+// Update notification image if popup is in notification mode
+async function updateNotificationImage(imageUrl) {
+  try {
+    // Send message to popup to update image
+    chrome.runtime.sendMessage({
+      action: 'updateNotificationImage',
+      imageUrl: imageUrl
+    });
+  } catch (error) {
+    console.log('Could not update notification image (popup may be closed):', error);
+  }
+}
+
+// Compress image for notifications (smaller and faster)
+async function compressImageForNotification(blob) {
+  const MAX_SIZE_KB = 100; // Much smaller for notifications
+  const MAX_DIMENSION = 200; // Small thumbnail size for notifications
+  
+  // Always compress for notifications to ensure fast loading
+  return new Promise((resolve, reject) => {
+    try {
+      // Create an offscreen canvas for background script context
+      const canvas = new OffscreenCanvas(1, 1);
+      const ctx = canvas.getContext('2d');
+      
+      createImageBitmap(blob).then(imageBitmap => {
+        // Calculate new dimensions while maintaining aspect ratio
+        let { width, height } = imageBitmap;
+        const aspectRatio = width / height;
+        
+        // Always resize for notifications
+        if (width > height) {
+          width = MAX_DIMENSION;
+          height = width / aspectRatio;
+        } else {
+          height = MAX_DIMENSION;
+          width = height * aspectRatio;
+        }
+        
+        canvas.width = width;
+        canvas.height = height;
+        
+        // Fill with white background to remove any transparency
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, width, height);
+        
+        // Draw and compress aggressively for notifications
+        ctx.drawImage(imageBitmap, 0, 0, width, height);
+        canvas.convertToBlob({ type: 'image/jpeg', quality: 0.6 }).then(resolve);
+      }).catch(reject);
+      
+    } catch (error) {
+      // Fallback: return original blob if compression fails
+      console.warn('Notification image compression failed, using original:', error);
+      resolve(blob);
+    }
+  });
 }
 
 // Compress image if it exceeds size limits and convert to JPEG
@@ -700,108 +846,36 @@ async function storeGeneratedOutfit(generatedImageUrl, originalClothingUrls, use
   await storageSet({ generatedOutfits });
 }
 
-// Handle notification button clicks
-chrome.notifications.onButtonClicked.addListener(async (notificationId, buttonIndex) => {
-  if (buttonIndex === 0) {
-    // View Result button clicked (for try-on results) or View Wardrobe button clicked
-    chrome.action.openPopup();
-    
-    // Send a message to the popup to switch to the appropriate tab
-    try {
-      // Wait a moment for popup to open, then send message
-      setTimeout(() => {
-        chrome.runtime.sendMessage({
-          action: 'switchToWardrobe'
-        });
-      }, 100);
-    } catch (error) {
-      console.log('Popup may not be ready yet, tab switch will happen on popup load');
-    }
-  }
-});
+// The popup-based notification system handles all notification interactions
+// No need for separate notification event handlers
 
-// Handle notification clicks (not just button clicks)
-chrome.notifications.onClicked.addListener(async (notificationId) => {
-  // Open popup when notification is clicked
-  chrome.action.openPopup();
-  
-  // If this was a wardrobe notification, switch to wardrobe tab
-  if (notificationId.includes('wardrobe') || notificationId.includes('clothing')) {
-    try {
-      setTimeout(() => {
-        chrome.runtime.sendMessage({
-          action: 'switchToWardrobe'
-        });
-      }, 100);
-    } catch (error) {
-      console.log('Popup may not be ready yet, tab switch will happen on popup load');
-    }
-  }
-});
-
-// Notification window management
-let notificationWindow = null;
-let pendingNotificationData = null;
-
+// Notification management using popup system
 async function showNotification(data) {
   console.log('showNotification called with:', data);
   
-  // Check if popup is open
   try {
-    const views = chrome.extension.getViews({ type: 'popup' });
-    if (views.length > 0) {
-      console.log('Popup is open, skipping notification window');
-      // Popup is open, don't show notification window
-      return;
-    }
-  } catch (error) {
-    console.log('Could not check popup views, proceeding with notification:', error);
-  }
-
-  try {
-    // Close existing notification window if any
-    if (notificationWindow) {
-      try {
-        await chrome.windows.remove(notificationWindow.id);
-      } catch (error) {
-        // Window may already be closed
-      }
-      notificationWindow = null;
-    }
-
-    // Store notification data for the new window
-    pendingNotificationData = data;
-
-    // Create notification window
-    console.log('Creating notification window...');
-    notificationWindow = await chrome.windows.create({
-      url: chrome.runtime.getURL('notification.html'),
-      type: 'popup',
-      width: 400,
-      height: 200,
-      focused: true
-    });
-    console.log('Notification window created:', notificationWindow.id);
-
-    // Clean up when window is closed
-    chrome.windows.onRemoved.addListener(function onWindowRemoved(windowId) {
-      if (notificationWindow && windowId === notificationWindow.id) {
-        notificationWindow = null;
-        pendingNotificationData = null;
-        chrome.windows.onRemoved.removeListener(onWindowRemoved);
-      }
-    });
+    // Store notification data for the popup to pick up
+    await chrome.storage.local.set({ notificationData: data });
+    
+    // Open popup in notification mode
+    console.log('Opening popup in notification mode...');
+    chrome.action.openPopup();
+    
+    console.log('Notification popup opened');
 
   } catch (error) {
-    console.error('Error creating notification window:', error);
-    // Fallback to browser notification
-    if (chrome.notifications) {
+    console.error('Error creating notification popup:', error);
+    
+    // Fallback to simple browser notification if popup fails
+    try {
       chrome.notifications.create({
         type: 'basic',
         iconUrl: 'icons/48.png',
         title: data.title || 'Try-it-on',
         message: data.message || 'Notification'
       });
+    } catch (fallbackError) {
+      console.error('Fallback notification also failed:', fallbackError);
     }
   }
 }
@@ -833,29 +907,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Handle notification requests
   if (message.action === 'showNotification') {
     showNotification(message.data);
-    sendResponse({ success: true });
-    return true;
-  }
-
-  // Handle notification data requests (from notification window)
-  if (message.type === 'GET_NOTIFICATION_DATA') {
-    if (pendingNotificationData) {
-      sendResponse({ data: pendingNotificationData });
-      pendingNotificationData = null; // Clear after sending
-    } else {
-      sendResponse({ data: null });
-    }
-    return true;
-  }
-
-  // Handle notification display requests (from notification window)
-  if (message.type === 'SHOW_NOTIFICATION' && notificationWindow) {
-    // Forward to notification window
-    chrome.tabs.query({ windowId: notificationWindow.id }, (tabs) => {
-      if (tabs.length > 0) {
-        chrome.tabs.sendMessage(tabs[0].id, message);
-      }
-    });
     sendResponse({ success: true });
     return true;
   }
