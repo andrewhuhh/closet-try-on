@@ -99,6 +99,9 @@ class ClosetTryOn {
         // Everything set up - show main interface
         CTO.ui.manager.showSection('main-interface');
         
+        // Check for tab switching from notification
+        await this.checkNotificationTabRequest();
+        
         // Migrate existing PNG avatars to JPEG if needed
         if (CTO.avatar.manager) {
           await CTO.avatar.manager.migratePNGAvatarsToJPEG();
@@ -112,6 +115,21 @@ class ClosetTryOn {
     } catch (error) {
       console.error('Error checking setup status:', error);
       this.showError('Error loading extension state');
+    }
+  }
+
+  async checkNotificationTabRequest() {
+    try {
+      // Check if there's a request to open to a specific tab from notification
+      const { openToTab } = await chrome.storage.local.get('openToTab');
+      if (openToTab && CTO.ui.manager) {
+        // Switch to the requested tab
+        CTO.ui.manager.switchTab(openToTab);
+        // Clear the request
+        await chrome.storage.local.remove('openToTab');
+      }
+    } catch (error) {
+      console.error('Error checking notification tab request:', error);
     }
   }
 
@@ -156,6 +174,7 @@ class ClosetTryOn {
     this.bindEvent('back-to-avatar', 'click', () => CTO.ui.manager.showSection('avatar-section'));
     this.bindEvent('manage-api-from-avatar', 'click', () => this.delegateToAvatarManager('switchToApiSettingsFromAvatar'));
     this.bindEvent('back-to-main-from-avatar', 'click', () => CTO.ui.manager.showSection('main-interface'));
+    this.bindEvent('proceed-to-main', 'click', () => CTO.ui.manager.showSection('main-interface'));
 
     // Avatar Management Event Listeners
     this.setupAvatarManagementListeners();
@@ -198,6 +217,13 @@ class ClosetTryOn {
 
     // Try on outfit button
     this.bindEvent('try-on-outfit', 'click', () => this.delegateToOutfitManager('tryOnCurrentOutfit'));
+
+    // Size preference change handlers
+    this.bindEvent('size-fit', 'change', () => this.saveSizePreference('fit'));
+    this.bindEvent('size-retain', 'change', () => this.saveSizePreference('retain'));
+    
+    // Load initial size preference
+    this.loadSizePreference();
   }
 
   setupDragAndDrop() {
@@ -469,7 +495,93 @@ class ClosetTryOn {
       console.error(message);
     }
   }
+
+  // Size Preference Management
+  async saveSizePreference(preference) {
+    try {
+      await CTO.storage.set({ sizePreference: preference });
+      console.log(`Size preference saved: ${preference}`);
+    } catch (error) {
+      console.error('Error saving size preference:', error);
+    }
+  }
+
+  async loadSizePreference() {
+    try {
+      const { sizePreference = 'fit' } = await CTO.storage.get('sizePreference');
+      
+      // Update radio buttons to reflect saved preference
+      const fitRadio = document.getElementById('size-fit');
+      const retainRadio = document.getElementById('size-retain');
+      
+      if (fitRadio && retainRadio) {
+        fitRadio.checked = sizePreference === 'fit';
+        retainRadio.checked = sizePreference === 'retain';
+      }
+      
+      console.log(`Size preference loaded: ${sizePreference}`);
+    } catch (error) {
+      console.error('Error loading size preference:', error);
+      // Default to 'fit' on error
+      const fitRadio = document.getElementById('size-fit');
+      if (fitRadio) fitRadio.checked = true;
+    }
+  }
 }
+
+// Listen for messages from background script
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'switchToWardrobe') {
+    // Switch to wardrobe tab
+    if (CTO.ui.manager) {
+      CTO.ui.manager.switchTab('wardrobe');
+    }
+    sendResponse({ success: true });
+  } else if (message.action === 'switchToOutfits') {
+    // Switch to outfits tab and refresh gallery
+    if (CTO.ui.manager) {
+      CTO.ui.manager.switchTab('outfits');
+    }
+    // Refresh the gallery to show existing items
+    if (CTO.outfit.manager) {
+      CTO.outfit.manager.loadOutfits();
+    }
+    sendResponse({ success: true });
+  } else if (message.action === 'generationStatusChanged') {
+    // Handle generation status changes from background script
+    console.log('Received generation status change:', message);
+    
+    // Use a small delay to ensure modules are initialized
+    setTimeout(async () => {
+      if (CTO.generation.monitor) {
+        if (message.inProgress) {
+          CTO.generation.monitor.showGenerationLoading(message.startTime);
+          CTO.generation.monitor.startGenerationStatusMonitoring();
+          CTO.generation.monitor.startGenerationTimeout(message.startTime);
+        } else {
+          CTO.generation.monitor.hideGenerationLoading();
+          
+          // Refresh displays if manager is available
+          if (CTO.outfit.manager) {
+            await CTO.outfit.manager.loadOutfits();
+            await CTO.outfit.manager.loadLatestTryOn();
+          }
+          
+          // Show completion toast if not in progress
+          if (global.toastManager) {
+            global.toastManager.generationComplete('Click to view your results', () => {
+              CTO.ui.manager.switchTab('outfits');
+            });
+          }
+        }
+      } else {
+        console.warn('Generation monitor not available yet, status change will be handled on init');
+      }
+    }, 100);
+    
+    sendResponse({ success: true });
+  }
+});
 
 // Initialize the extension when popup opens
 document.addEventListener('DOMContentLoaded', () => {

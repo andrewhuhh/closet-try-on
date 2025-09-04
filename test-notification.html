@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Notification System Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-section {
+            background: white;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .success { background: #28a745; }
+        .warning { background: #ffc107; color: #212529; }
+        .error { background: #dc3545; }
+        .info { background: #17a2b8; }
+        h1 { color: #333; }
+        h3 { color: #666; margin-top: 0; }
+        p { color: #666; margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Try-it-on Notification System Test</h1>
+    <p>This page helps test the notification system when the extension popup is closed.</p>
+
+    <div class="test-section">
+        <h3>📢 Basic Notifications</h3>
+        <p>Test different types of notifications:</p>
+        <button onclick="testNotification('success', '✅ Item Added!', 'Clothing item saved to wardrobe')">Success Notification</button>
+        <button class="warning" onclick="testNotification('warning', '⚠️ Storage Full', 'Consider clearing old items')">Warning Notification</button>
+        <button class="error" onclick="testNotification('error', '❌ Generation Failed', 'Please check your API key')">Error Notification</button>
+        <button class="info" onclick="testNotification('info', 'ℹ️ Generation Started', 'Your outfit is being created...')">Info Notification</button>
+    </div>
+
+    <div class="test-section">
+        <h3>🎨 Generation Notifications</h3>
+        <p>Test notifications for generation events:</p>
+        <button onclick="testGenerationNotification('started')">Generation Started</button>
+        <button class="success" onclick="testGenerationNotification('complete')">Generation Complete</button>
+        <button class="success" onclick="testGenerationNotification('avatar')">Avatar Generated</button>
+        <button class="success" onclick="testGenerationNotification('outfit')">Outfit Generated</button>
+    </div>
+
+    <div class="test-section">
+        <h3>👕 Wardrobe Notifications</h3>
+        <p>Test wardrobe-related notifications:</p>
+        <button class="success" onclick="testWardrobeNotification('added')">Item Added to Wardrobe</button>
+        <button class="warning" onclick="testWardrobeNotification('removed')">Item Removed</button>
+        <button class="warning" onclick="testWardrobeNotification('exists')">Item Already Exists</button>
+    </div>
+
+    <div class="test-section">
+        <h3>⚙️ Testing Instructions</h3>
+        <ol>
+            <li><strong>Close the extension popup</strong> if it's open</li>
+            <li>Click any notification button above</li>
+            <li>A notification window should appear in the bottom-right corner</li>
+            <li>Test the action buttons in the notification</li>
+            <li>Verify that clicking "Open Extension" opens the popup</li>
+        </ol>
+    </div>
+
+    <script>
+        function testNotification(type, title, message) {
+            // Test basic notification through background script
+            chrome.runtime.sendMessage({
+                action: 'showNotification',
+                data: {
+                    type: type,
+                    title: title,
+                    message: message,
+                    duration: 5000,
+                    actionText: 'Open Extension',
+                    actionType: 'open-tab'
+                }
+            }, (response) => {
+                console.log('Notification sent:', response);
+            });
+        }
+
+        function testGenerationNotification(eventType) {
+            let data = {};
+            
+            switch(eventType) {
+                case 'started':
+                    data = {
+                        type: 'info',
+                        title: 'Generation Started',
+                        message: 'Creating your outfit try-on...',
+                        icon: '🎨',
+                        duration: 2000,
+                        actionText: 'View Progress',
+                        actionType: 'view-latest'
+                    };
+                    break;
+                case 'complete':
+                    data = {
+                        type: 'success',
+                        title: 'Generation Complete!',
+                        message: 'Your try-on result is ready',
+                        icon: '🎉',
+                        duration: 4000,
+                        actionText: 'View Outfits',
+                        actionType: 'view-outfits'
+                    };
+                    break;
+                case 'avatar':
+                    data = {
+                        type: 'success',
+                        title: 'Avatar Created!',
+                        message: 'Your avatar has been generated successfully',
+                        icon: '👤',
+                        duration: 4000,
+                        actionText: 'Open Extension',
+                        actionType: 'open-tab'
+                    };
+                    break;
+                case 'outfit':
+                    data = {
+                        type: 'success',
+                        title: 'Outfit Ready!',
+                        message: 'Your try-on result is ready to view',
+                        icon: '👕',
+                        duration: 4000,
+                        actionText: 'View Latest',
+                        actionType: 'view-latest'
+                    };
+                    break;
+            }
+
+            chrome.runtime.sendMessage({
+                action: 'showNotification',
+                data: data
+            }, (response) => {
+                console.log('Generation notification sent:', response);
+            });
+        }
+
+        function testWardrobeNotification(eventType) {
+            let data = {};
+            
+            switch(eventType) {
+                case 'added':
+                    data = {
+                        type: 'success',
+                        title: 'Added to Wardrobe!',
+                        message: 'Blue T-Shirt saved successfully',
+                        icon: '👕',
+                        duration: 3000,
+                        actionText: 'View Wardrobe',
+                        actionType: 'view-wardrobe'
+                    };
+                    break;
+                case 'removed':
+                    data = {
+                        type: 'warning',
+                        title: 'Removed from Wardrobe',
+                        message: 'Blue T-Shirt has been removed',
+                        icon: '🗑️',
+                        duration: 2500
+                    };
+                    break;
+                case 'exists':
+                    data = {
+                        type: 'warning',
+                        title: 'Already in Wardrobe',
+                        message: 'Blue T-Shirt is already saved',
+                        icon: '📁',
+                        duration: 2500
+                    };
+                    break;
+            }
+
+            chrome.runtime.sendMessage({
+                action: 'showNotification',
+                data: data
+            }, (response) => {
+                console.log('Wardrobe notification sent:', response);
+            });
+        }
+
+        // Test if extension is available
+        if (typeof chrome === 'undefined' || !chrome.runtime) {
+            document.body.innerHTML = '<h1 style="color: red;">⚠️ Chrome Extension API not available</h1><p>This test page needs to be loaded as part of the Chrome extension.</p>';
+        }
+    </script>
+</body>
+</html> 

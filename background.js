@@ -1,32 +1,97 @@
 ﻿ // Closet Try-On Extension Background Script
 
-// Storage helpers (callback-based)
-function storageGet(keys) {
+// Storage helpers using IndexedDB (compatible with content scripts)
+const DB_NAME = 'ClosetTryOnDB';
+const DB_VERSION = 1;
+const STORE_NAME = 'storage';
+
+let dbInstance = null;
+
+async function initDB() {
+  if (dbInstance) return dbInstance;
+  
   return new Promise((resolve, reject) => {
-    try {
-      chrome.storage.local.get(keys, (result) => {
-        const err = chrome.runtime?.lastError;
-        if (err) return reject(err);
-        resolve(result || {});
-      });
-    } catch (e) {
-      reject(e);
-    }
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    
+    request.onerror = () => reject(request.error);
+    
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: 'key' });
+      }
+    };
+    
+    request.onsuccess = () => {
+      dbInstance = request.result;
+      resolve(dbInstance);
+    };
   });
 }
 
-function storageSet(items) {
-  return new Promise((resolve, reject) => {
-    try {
-      chrome.storage.local.set(items, () => {
-        const err = chrome.runtime?.lastError;
-        if (err) return reject(err);
-        resolve();
+async function storageGet(keys) {
+  try {
+    const db = await initDB();
+    const transaction = db.transaction([STORE_NAME], 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    
+    if (keys === null || keys === undefined) {
+      // Get all data
+      const result = {};
+      const request = store.getAll();
+      const allData = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
       });
-    } catch (e) {
-      reject(e);
+      
+      for (const item of allData) {
+        if (item.key !== '__indexeddb_migration_complete__') {
+          result[item.key] = item.value;
+        }
+      }
+      return result;
     }
-  });
+    
+    const keysArray = Array.isArray(keys) ? keys : [keys];
+    const result = {};
+    
+    for (const key of keysArray) {
+      const request = store.get(key);
+      const data = await new Promise((resolve) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => resolve(null);
+      });
+      
+      if (data && data.value !== undefined) {
+        result[key] = data.value;
+      }
+    }
+    
+    return result;
+  } catch (error) {
+    console.error('Storage get error:', error);
+    return {};
+  }
+}
+
+async function storageSet(items) {
+  try {
+    const db = await initDB();
+    const transaction = db.transaction([STORE_NAME], 'readwrite');
+    const store = transaction.objectStore(STORE_NAME);
+    
+    for (const [key, value] of Object.entries(items)) {
+      store.put({ key, value });
+    }
+    
+    await new Promise((resolve, reject) => {
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error);
+    });
+  } catch (error) {
+    console.error('Storage set error:', error);
+    throw error;
+  }
 }
 
 // Create context menu items when extension is installed
@@ -53,12 +118,16 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       sourceTitle: tab.title,
       sourceFavicon: tab.favIconUrl
     });
-    // Show notification
-    chrome.notifications.create({
-      type: 'basic',
-      iconUrl: 'icons/icon128.png',
-      title: 'Clothing Added',
-      message: 'Clothing item added to your outfit collection!'
+    
+    // Show notification using our new notification system
+    showNotification({
+      title: 'Added to Wardrobe!',
+      message: 'Clothing item saved successfully',
+      type: 'success',
+      icon: '👕',
+      duration: 3000,
+      actionText: 'View Wardrobe',
+      actionType: 'view-wardrobe'
     });
   } 
   
@@ -71,11 +140,14 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     
     if (!avatarGenerated) {
       // No avatar - show notification about setup requirement
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: 'icons/icon128.png',
+      showNotification({
         title: 'Setup Required',
-        message: 'Please set up your avatar first in the extension popup.'
+        message: 'Please set up your avatar first in the extension popup',
+        type: 'warning',
+        icon: '⚠️',
+        duration: 5000,
+        actionText: 'Setup Avatar',
+        actionType: 'open-tab'
       });
       return;
     }
@@ -143,6 +215,79 @@ async function generateTryOnImage(clothingImageUrl, options = {}) {
   // Set generation status to loading
   await storageSet({ generationInProgress: true, generationStartTime: new Date().toISOString() });
   
+  // Notify popup about generation status change
+  notifyPopupGenerationStatus(true);
+  
+  // Timeout configuration (5 minutes)
+  const GENERATION_TIMEOUT = 5 * 60 * 1000;
+  
+  try {
+    // Wrap the generation logic in a timeout promise race
+    await Promise.race([
+      generateTryOnImageInternal(clothingImageUrl, options),
+      new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('Generation timeout: Process took longer than 5 minutes'));
+        }, GENERATION_TIMEOUT);
+      })
+    ]);
+  } catch (error) {
+    console.error('Error generating try-on image:', error);
+    
+    // Clear generation status on error
+    await storageSet({ generationInProgress: false, generationStartTime: null });
+    
+    // Notify popup about generation status change
+    notifyPopupGenerationStatus(false);
+    
+    // Handle timeout specifically
+    if (error.message && error.message.includes('Generation timeout')) {
+      showNotification({
+        title: 'Generation Timeout',
+        message: 'Try-on generation timed out. Please try again with smaller images or check your network connection.',
+        type: 'error',
+        icon: '⏰',
+        duration: 8000,
+        actionText: 'Open Extension',
+        actionType: 'open-tab'
+      });
+      return;
+    }
+    
+    // Handle other errors (existing error handling logic)
+    let title = 'Generation Failed';
+    let message = 'Failed to generate try-on image. Please try again.';
+    
+    if (error.message) {
+      if (error.message.includes('Resource::kQuotaBytes quota exceeded') || error.message.includes('quotaBytes')) {
+        title = 'Image Too Large';
+        message = 'Image file size exceeds API limits. Try using smaller, lower resolution images.';
+      } else if (error.message.includes('429')) {
+        title = 'API Quota Exceeded';
+        message = 'API quota exceeded. Please check your billing or try again later.';
+      } else if (error.message.includes('401') || error.message.includes('403')) {
+        title = 'API Key Error';
+        message = 'Invalid or expired API key. Please update your API key in the extension.';
+      } else if (error.message.includes('Network error') || error.message.includes('fetch')) {
+        title = 'Network Error';
+        message = 'Network error. Please check your internet connection and try again.';
+      }
+    }
+    
+    showNotification({
+      title: title,
+      message: message,
+      type: 'error',
+      icon: '❌',
+      duration: 8000,
+      actionText: 'Open Extension',
+      actionType: 'open-tab'
+    });
+  }
+}
+
+// Internal generation function (extracted from the main function)
+async function generateTryOnImageInternal(clothingImageUrl, options = {}) {
   try {
     // Get stored data
     const { apiKey, avatars, selectedAvatarIndex = 0 } = await storageGet(['apiKey', 'avatars', 'selectedAvatarIndex']);
@@ -150,11 +295,15 @@ async function generateTryOnImage(clothingImageUrl, options = {}) {
     if (!apiKey) {
       // Clear generation status on early return
       await storageSet({ generationInProgress: false, generationStartTime: null });
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: 'icons/icon128.png',
+      notifyPopupGenerationStatus(false);
+      showNotification({
         title: 'API Key Required',
-        message: 'Please set your Gemini API key in the extension popup.'
+        message: 'Please set your Gemini API key in the extension popup',
+        type: 'warning',
+        icon: '🔑',
+        duration: 5000,
+        actionText: 'Setup API Key',
+        actionType: 'open-tab'
       });
       chrome.action.openPopup();
       return;
@@ -163,11 +312,15 @@ async function generateTryOnImage(clothingImageUrl, options = {}) {
     if (!avatars || avatars.length === 0) {
       // Clear generation status on early return
       await storageSet({ generationInProgress: false, generationStartTime: null });
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: 'icons/icon128.png',
+      notifyPopupGenerationStatus(false);
+      showNotification({
         title: 'Avatar Required',
-        message: 'Please generate your avatar first in the extension popup.'
+        message: 'Please generate your avatar first in the extension popup',
+        type: 'warning',
+        icon: '👤',
+        duration: 5000,
+        actionText: 'Create Avatar',
+        actionType: 'open-tab'
       });
       chrome.action.openPopup();
       return;
@@ -180,11 +333,15 @@ async function generateTryOnImage(clothingImageUrl, options = {}) {
     if (!selectedAvatar || !selectedAvatar.url) {
       // Clear generation status on early return
       await storageSet({ generationInProgress: false, generationStartTime: null });
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: 'icons/icon128.png',
+      notifyPopupGenerationStatus(false);
+      showNotification({
         title: 'Avatar Error',
-        message: 'Selected avatar is invalid. Please check your avatar settings.'
+        message: 'Selected avatar is invalid. Please check your avatar settings',
+        type: 'error',
+        icon: '⚠️',
+        duration: 5000,
+        actionText: 'Fix Avatar',
+        actionType: 'open-tab'
       });
       chrome.action.openPopup();
       return;
@@ -210,50 +367,50 @@ async function generateTryOnImage(clothingImageUrl, options = {}) {
     // Clear generation status
     await storageSet({ generationInProgress: false, generationStartTime: null });
     
+    // Notify popup about generation status change
+    notifyPopupGenerationStatus(false);
+    
     // Show success notification with option to view
-    chrome.notifications.create({
-      type: 'basic',
-      iconUrl: 'icons/icon128.png',
-      title: 'Try-On Complete!',
-      message: `Virtual try-on ready using ${selectedAvatar.pose} avatar. Click to view!`,
-      buttons: [{ title: 'View Result' }]
+    showNotification({
+      title: 'Outfit Ready!',
+      message: `Virtual try-on ready using ${selectedAvatar.pose} avatar`,
+      type: 'success',
+      icon: '👕',
+      duration: 4000,
+      actionText: 'View Result',
+      actionType: 'view-outfits'
     });
     
-    // Open popup to show result
+    // Open popup to show result and switch to outfits tab
     chrome.action.openPopup();
     
-  } catch (error) {
-    console.error('Error generating try-on image:', error);
-    
-    // Clear generation status on error
-    await storageSet({ generationInProgress: false, generationStartTime: null });
-    
-    // Handle different types of errors
-    let title = 'Generation Failed';
-    let message = 'Failed to generate try-on image. Please try again.';
-    
-    if (error.message) {
-      if (error.message.includes('Resource::kQuotaBytes quota exceeded') || error.message.includes('quotaBytes')) {
-        title = 'Image Too Large';
-        message = 'Image file size exceeds API limits. Try using smaller, lower resolution images.';
-      } else if (error.message.includes('429')) {
-        title = 'API Quota Exceeded';
-        message = 'API quota exceeded. Please check your billing or try again later.';
-      } else if (error.message.includes('401') || error.message.includes('403')) {
-        title = 'API Key Error';
-        message = 'Invalid or expired API key. Please update your API key in the extension.';
-      } else if (error.message.includes('Network error') || error.message.includes('fetch')) {
-        title = 'Network Error';
-        message = 'Network error. Please check your internet connection and try again.';
-      }
+    // Send a message to switch to outfits tab after generation
+    try {
+      setTimeout(() => {
+        chrome.runtime.sendMessage({
+          action: 'switchToOutfits'
+        });
+      }, 100);
+    } catch (error) {
+      console.log('Popup may not be ready yet, tab switch will happen on popup load');
     }
-    
-    chrome.notifications.create({
-      type: 'basic',
-      iconUrl: 'icons/icon128.png',
-      title: title,
-      message: message
+  } catch (error) {
+    // Re-throw error to be handled by the main function
+    throw error;
+  }
+}
+
+// Helper function to notify popup about generation status changes
+function notifyPopupGenerationStatus(inProgress, startTime = null) {
+  try {
+    chrome.runtime.sendMessage({
+      action: 'generationStatusChanged',
+      inProgress: inProgress,
+      startTime: startTime || (inProgress ? new Date().toISOString() : null)
     });
+  } catch (error) {
+    // Popup might not be open, that's fine
+    console.log('Could not notify popup (popup may be closed):', error.message);
   }
 }
 
@@ -544,9 +701,177 @@ async function storeGeneratedOutfit(generatedImageUrl, originalClothingUrls, use
 }
 
 // Handle notification button clicks
-chrome.notifications.onButtonClicked.addListener((notificationId, buttonIndex) => {
+chrome.notifications.onButtonClicked.addListener(async (notificationId, buttonIndex) => {
   if (buttonIndex === 0) {
-    // View Result button clicked
+    // View Result button clicked (for try-on results) or View Wardrobe button clicked
     chrome.action.openPopup();
+    
+    // Send a message to the popup to switch to the appropriate tab
+    try {
+      // Wait a moment for popup to open, then send message
+      setTimeout(() => {
+        chrome.runtime.sendMessage({
+          action: 'switchToWardrobe'
+        });
+      }, 100);
+    } catch (error) {
+      console.log('Popup may not be ready yet, tab switch will happen on popup load');
+    }
+  }
+});
+
+// Handle notification clicks (not just button clicks)
+chrome.notifications.onClicked.addListener(async (notificationId) => {
+  // Open popup when notification is clicked
+  chrome.action.openPopup();
+  
+  // If this was a wardrobe notification, switch to wardrobe tab
+  if (notificationId.includes('wardrobe') || notificationId.includes('clothing')) {
+    try {
+      setTimeout(() => {
+        chrome.runtime.sendMessage({
+          action: 'switchToWardrobe'
+        });
+      }, 100);
+    } catch (error) {
+      console.log('Popup may not be ready yet, tab switch will happen on popup load');
+    }
+  }
+});
+
+// Notification window management
+let notificationWindow = null;
+let pendingNotificationData = null;
+
+async function showNotification(data) {
+  console.log('showNotification called with:', data);
+  
+  // Check if popup is open
+  try {
+    const views = chrome.extension.getViews({ type: 'popup' });
+    if (views.length > 0) {
+      console.log('Popup is open, skipping notification window');
+      // Popup is open, don't show notification window
+      return;
+    }
+  } catch (error) {
+    console.log('Could not check popup views, proceeding with notification:', error);
+  }
+
+  try {
+    // Close existing notification window if any
+    if (notificationWindow) {
+      try {
+        await chrome.windows.remove(notificationWindow.id);
+      } catch (error) {
+        // Window may already be closed
+      }
+      notificationWindow = null;
+    }
+
+    // Store notification data for the new window
+    pendingNotificationData = data;
+
+    // Create notification window
+    console.log('Creating notification window...');
+    notificationWindow = await chrome.windows.create({
+      url: chrome.runtime.getURL('notification.html'),
+      type: 'popup',
+      width: 400,
+      height: 200,
+      focused: true
+    });
+    console.log('Notification window created:', notificationWindow.id);
+
+    // Clean up when window is closed
+    chrome.windows.onRemoved.addListener(function onWindowRemoved(windowId) {
+      if (notificationWindow && windowId === notificationWindow.id) {
+        notificationWindow = null;
+        pendingNotificationData = null;
+        chrome.windows.onRemoved.removeListener(onWindowRemoved);
+      }
+    });
+
+  } catch (error) {
+    console.error('Error creating notification window:', error);
+    // Fallback to browser notification
+    if (chrome.notifications) {
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icons/48.png',
+        title: data.title || 'Try-it-on',
+        message: data.message || 'Notification'
+      });
+    }
+  }
+}
+
+// Handle keyboard shortcuts
+chrome.commands.onCommand.addListener((command) => {
+  if (command === '_execute_action') {
+    // Open the popup when keyboard shortcut is pressed
+    chrome.action.openPopup();
+  }
+});
+
+// Handle messages from popup and content scripts
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Handle generation status requests
+  if (message.action === 'getGenerationStatus') {
+    storageGet(['generationInProgress', 'generationStartTime']).then(result => {
+      sendResponse({
+        inProgress: result.generationInProgress || false,
+        startTime: result.generationStartTime || null
+      });
+    }).catch(error => {
+      console.error('Error getting generation status:', error);
+      sendResponse({ inProgress: false, startTime: null });
+    });
+    return true; // Keep message port open for async response
+  }
+
+  // Handle notification requests
+  if (message.action === 'showNotification') {
+    showNotification(message.data);
+    sendResponse({ success: true });
+    return true;
+  }
+
+  // Handle notification data requests (from notification window)
+  if (message.type === 'GET_NOTIFICATION_DATA') {
+    if (pendingNotificationData) {
+      sendResponse({ data: pendingNotificationData });
+      pendingNotificationData = null; // Clear after sending
+    } else {
+      sendResponse({ data: null });
+    }
+    return true;
+  }
+
+  // Handle notification display requests (from notification window)
+  if (message.type === 'SHOW_NOTIFICATION' && notificationWindow) {
+    // Forward to notification window
+    chrome.tabs.query({ windowId: notificationWindow.id }, (tabs) => {
+      if (tabs.length > 0) {
+        chrome.tabs.sendMessage(tabs[0].id, message);
+      }
+    });
+    sendResponse({ success: true });
+    return true;
+  }
+
+  // Handle test notification requests (for development/testing)
+  if (message.action === 'testNotification') {
+    console.log('Test notification requested');
+    showNotification({
+      title: 'Test Notification',
+      message: 'This is a test notification from the background script!',
+      type: 'info',
+      duration: 5000,
+      actionText: 'Open Extension',
+      actionType: 'open-tab'
+    });
+    sendResponse({ success: true });
+    return true;
   }
 });

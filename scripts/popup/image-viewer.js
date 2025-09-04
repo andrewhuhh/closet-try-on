@@ -52,46 +52,49 @@
         console.error('image-viewer-next button not found');
       }
       
-      // Action buttons with error handling
-      const openTabBtn = document.getElementById('open-in-tab');
-      const downloadBtn = document.getElementById('download-image');
-      const shareBtn = document.getElementById('share-image');
+      // New floating action buttons
+      const moreOptionsBtn = document.getElementById('more-options-btn');
+      const regenerateBtn = document.getElementById('regenerate-outfit-btn');
       
-      if (openTabBtn) {
-        openTabBtn.addEventListener('click', () => this.openImageInTab());
-      } else {
-        console.error('open-in-tab button not found');
+      if (moreOptionsBtn) {
+        moreOptionsBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.toggleMoreOptionsDropdown();
+        });
       }
       
-      if (downloadBtn) {
-        downloadBtn.addEventListener('click', () => this.downloadCurrentImage());
-      } else {
-        console.error('download-image button not found');
-      }
-      
-      if (shareBtn) {
-        shareBtn.addEventListener('click', () => this.shareCurrentImage());
-      } else {
-        console.error('share-image button not found');
-      }
-      
-      const deleteBtn = document.getElementById('delete-image');
-      if (deleteBtn) {
-        deleteBtn.addEventListener('click', () => this.deleteCurrentImage());
-      } else {
-        console.error('delete-image button not found');
-      }
-
-      // Regeneration button
-      const regenerateBtn = document.getElementById('regenerate-outfit');
       if (regenerateBtn) {
-        regenerateBtn.addEventListener('click', () => this.regenerateOutfit());
+        regenerateBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.toggleRegenerateDropdown();
+        });
       }
-
-      // View source button
-      const viewSourceBtn = document.getElementById('view-source');
-      if (viewSourceBtn) {
-        viewSourceBtn.addEventListener('click', () => this.viewCurrentItemSource());
+      
+      // More options dropdown actions
+      const moreOptionsDropdown = document.getElementById('more-options-dropdown');
+      if (moreOptionsDropdown) {
+        moreOptionsDropdown.addEventListener('click', (e) => {
+          const action = e.target.closest('.dropdown-item')?.dataset.action;
+          if (action) {
+            e.stopPropagation();
+            this.handleMoreOptionsAction(action);
+            this.closeAllDropdowns();
+          }
+        });
+      }
+      
+      // Pose options in regenerate dropdown
+      const poseOptions = document.getElementById('pose-options');
+      if (poseOptions) {
+        poseOptions.addEventListener('click', (e) => {
+          const poseBtn = e.target.closest('.pose-option');
+          if (poseBtn) {
+            e.stopPropagation();
+            const avatarIndex = parseInt(poseBtn.dataset.avatarIndex);
+            this.regenerateWithPose(avatarIndex);
+            this.closeAllDropdowns();
+          }
+        });
       }
       
       // Close modal when clicking outside
@@ -103,6 +106,13 @@
           }
         });
       }
+      
+      // Close dropdowns when clicking elsewhere
+      document.addEventListener('click', (e) => {
+        if (!e.target.closest('.image-viewer-floating-actions')) {
+          this.closeAllDropdowns();
+        }
+      });
       
       // Keyboard navigation
       document.addEventListener('keydown', (e) => {
@@ -127,11 +137,10 @@
     openImageViewer(imageUrl, imageInfo, imageCollection = null, index = 0) {
       const modal = document.getElementById('image-viewer-modal');
       const image = document.getElementById('image-viewer-image');
-      const info = document.getElementById('image-viewer-info');
       const prevBtn = document.getElementById('image-viewer-prev');
       const nextBtn = document.getElementById('image-viewer-next');
       
-      if (!modal || !image || !info) {
+      if (!modal || !image) {
         console.error('Image viewer elements not found');
         return;
       }
@@ -142,7 +151,6 @@
       
       // Display the image
       image.src = imageUrl;
-      info.innerHTML = this.formatImageInfo(imageInfo);
       
       // Show/hide navigation arrows
       const hasMultiple = this.currentImageCollection.length > 1;
@@ -155,7 +163,8 @@
         nextBtn.disabled = this.currentImageIndex >= this.currentImageCollection.length - 1;
       }
       
-      // Show original clothing thumbnails and regeneration controls for generated outfits
+      // Show/hide floating action buttons and update controls
+      this.updateFloatingActionButtons(imageInfo);
       this.updateModalExtendedControls(imageInfo);
       
       // Show modal
@@ -167,6 +176,7 @@
       console.log('closeImageViewer called');
       const modal = document.getElementById('image-viewer-modal');
       if (modal) {
+        this.closeAllDropdowns();
         modal.classList.remove('active');
         document.body.style.overflow = ''; // Restore scrolling
         console.log('Modal closed successfully');
@@ -190,11 +200,36 @@
       }
     }
 
+    // Floating Action Buttons Control
+    updateFloatingActionButtons(imageInfo) {
+      const regenerateBtn = document.getElementById('regenerate-outfit-btn');
+      const viewSourceBtn = document.querySelector('[data-action="view-source"]');
+      
+      // Show regenerate button only for generated outfits
+      const isGeneratedOutfit = imageInfo?.originalData && (
+        imageInfo.type === 'Generated Outfit' || 
+        imageInfo.type === 'Multi-Item Outfit'
+      );
+      
+      if (regenerateBtn) {
+        regenerateBtn.style.display = isGeneratedOutfit ? 'flex' : 'none';
+      }
+      
+      // Show/hide source option in dropdown based on whether item has source information
+      const hasSource = imageInfo?.source?.url || imageInfo?.sourceUrl;
+      if (viewSourceBtn) {
+        viewSourceBtn.style.display = hasSource ? 'flex' : 'none';
+      }
+      
+      // Store current outfit data for regeneration
+      if (isGeneratedOutfit && imageInfo.originalData) {
+        this.currentOutfitForRegeneration = imageInfo.originalData;
+      }
+    }
+
     // Extended Modal Controls
     updateModalExtendedControls(imageInfo) {
       const originalClothingSection = document.getElementById('original-clothing-section');
-      const regenerationControls = document.getElementById('regeneration-controls');
-      const viewSourceBtn = document.getElementById('view-source');
       
       // Show extended controls only for generated outfits
       const isGeneratedOutfit = imageInfo?.originalData && (
@@ -204,18 +239,9 @@
       
       if (isGeneratedOutfit && imageInfo.originalData) {
         this.showOriginalClothingThumbnails(imageInfo.originalData);
-        this.showRegenerationControls(imageInfo.originalData);
         if (originalClothingSection) originalClothingSection.style.display = 'block';
-        if (regenerationControls) regenerationControls.style.display = 'block';
       } else {
         if (originalClothingSection) originalClothingSection.style.display = 'none';
-        if (regenerationControls) regenerationControls.style.display = 'none';
-      }
-
-      // Show/hide source button based on whether item has source information
-      const hasSource = imageInfo?.source?.url || imageInfo?.sourceUrl;
-      if (viewSourceBtn) {
-        viewSourceBtn.style.display = hasSource ? 'inline-block' : 'none';
       }
     }
 
@@ -241,7 +267,6 @@
         thumbnail.title = 'Click to view this item in your wardrobe';
         thumbnail.innerHTML = `
           <img src="${url}" alt="Original clothing ${index + 1}">
-          <div class="expand-icon">👕</div>
         `;
         
         // Click to navigate to wardrobe and find the clothing item
@@ -338,43 +363,105 @@
       }
     }
 
-    async showRegenerationControls(outfitData) {
-      const poseSelector = document.getElementById('pose-selector');
-      const regenerateBtn = document.getElementById('regenerate-outfit');
+    // Dropdown Controls
+    toggleMoreOptionsDropdown() {
+      const dropdown = document.getElementById('more-options-dropdown');
+      if (dropdown) {
+        const isActive = dropdown.classList.contains('active');
+        this.closeAllDropdowns();
+        if (!isActive) {
+          dropdown.classList.add('active');
+        }
+      }
+    }
+
+    toggleRegenerateDropdown() {
+      const dropdown = document.getElementById('regenerate-dropdown');
+      if (dropdown) {
+        const isActive = dropdown.classList.contains('active');
+        this.closeAllDropdowns();
+        if (!isActive) {
+          this.populatePoseOptions();
+          dropdown.classList.add('active');
+        }
+      }
+    }
+
+    closeAllDropdowns() {
+      const dropdowns = document.querySelectorAll('.image-viewer-dropdown');
+      dropdowns.forEach(dropdown => dropdown.classList.remove('active'));
+    }
+
+    async populatePoseOptions() {
+      const poseOptions = document.getElementById('pose-options');
+      if (!poseOptions) return;
       
-      if (!poseSelector) return;
-      
-      // Store current outfit data for regeneration
-      this.currentOutfitForRegeneration = outfitData;
-      
-      // Populate pose selector with available avatars
       try {
         const { avatars = [] } = await CTO.storage.get('avatars');
-        poseSelector.innerHTML = '<option value="">Select pose...</option>';
+        poseOptions.innerHTML = '';
         
         avatars.forEach((avatar, index) => {
-          const option = document.createElement('option');
-          option.value = index;
+          const option = document.createElement('button');
+          option.className = 'pose-option';
+          option.dataset.avatarIndex = index;
           option.textContent = avatar.pose || `Avatar ${index + 1}`;
           
           // Mark current pose if it matches
-          if (outfitData.usedAvatar && avatar.pose === outfitData.usedAvatar.pose) {
+          if (this.currentOutfitForRegeneration?.usedAvatar && avatar.pose === this.currentOutfitForRegeneration.usedAvatar.pose) {
+            option.classList.add('current');
             option.textContent += ' (current)';
           }
           
-          poseSelector.appendChild(option);
+          poseOptions.appendChild(option);
         });
       } catch (error) {
         console.error('Error loading avatars for pose selector:', error);
       }
     }
 
-    async regenerateOutfit() {
-      const poseSelector = document.getElementById('pose-selector');
-      if (!poseSelector) return;
+    handleMoreOptionsAction(action) {
+      switch (action) {
+        case 'download':
+          this.downloadCurrentImage();
+          break;
+        case 'copy':
+          this.copyImageLink();
+          break;
+        case 'open':
+          this.openImageInTab();
+          break;
+        case 'view-source':
+          this.viewCurrentItemSource();
+          break;
+        case 'delete':
+          this.deleteCurrentImage();
+          break;
+        default:
+          console.warn('Unknown action:', action);
+      }
+    }
+
+    async copyImageLink() {
+      const currentImage = this.currentImageCollection[this.currentImageIndex];
+      if (!currentImage) return;
       
-      const selectedAvatarIndex = parseInt(poseSelector.value);
-      
+      try {
+        await navigator.clipboard.writeText(currentImage.url);
+        if (global.toastManager) {
+          global.toastManager.success('Link Copied!', 'Image URL copied to clipboard', {
+            icon: '📋',
+            duration: 2000
+          });
+        }
+      } catch (error) {
+        console.error('Error copying image URL:', error);
+        if (global.toastManager) {
+          global.toastManager.error('Copy Failed', 'Could not copy image URL');
+        }
+      }
+    }
+
+    async regenerateWithPose(avatarIndex) {
       if (!this.currentOutfitForRegeneration) {
         if (global.toastManager) {
           global.toastManager.error('Error', 'No outfit data available for regeneration');
@@ -382,9 +469,9 @@
         return;
       }
       
-      if (isNaN(selectedAvatarIndex)) {
+      if (isNaN(avatarIndex)) {
         if (global.toastManager) {
-          global.toastManager.warning('Select Pose', 'Please select a pose for regeneration');
+          global.toastManager.warning('Invalid Pose', 'Please select a valid pose for regeneration');
         }
         return;
       }
@@ -418,7 +505,7 @@
         }
         
         // Set the selected avatar index in storage
-        await CTO.storage.set({ selectedAvatarIndex });
+        await CTO.storage.set({ selectedAvatarIndex: avatarIndex });
         
         // Trigger regeneration via outfit manager
         if (CTO.outfit.manager) {
@@ -709,6 +796,9 @@
       const { clothingItems = [] } = await CTO.storage.get('clothingItems');
       const imageUrl = imageData.url;
       
+      // Find the item being deleted for notification
+      const itemToDelete = clothingItems.find(item => item.url === imageUrl);
+      
       // Find and remove the clothing item
       const updatedItems = clothingItems.filter(item => item.url !== imageUrl);
       
@@ -721,6 +811,17 @@
       // Refresh the wardrobe display
       if (CTO.outfit.manager) {
         await CTO.outfit.manager.loadWardrobe();
+      }
+      
+      // Show notification for item removal
+      if (global.toastManager && itemToDelete) {
+        let itemName = 'Item';
+        if (itemToDelete.source && itemToDelete.source.title) {
+          itemName = itemToDelete.source.title;
+        } else {
+          itemName = 'Clothing Item';
+        }
+        global.toastManager.wardrobeItemRemoved(itemName);
       }
     }
 
@@ -793,67 +894,8 @@
     }
   };
 
-  // Global helper functions for backward compatibility
-  global.addViewButtonToImage = function(container, imageUrl, imageInfo, imageCollection = null, index = 0) {
-    const viewBtn = document.createElement('button');
-    viewBtn.className = 'image-item-view-btn';
-    viewBtn.textContent = '👁️';
-    viewBtn.onclick = (e) => {
-      e.stopPropagation();
-      ns.imageViewer.viewer.openImageViewer(imageUrl, imageInfo, imageCollection, index);
-    };
-    container.appendChild(viewBtn);
-  };
-
-  global.addSourceButtonToImage = function(container, sourceInfo) {
-    const sourceBtn = document.createElement('button');
-    sourceBtn.className = 'source-link-btn';
-    sourceBtn.title = `View source: ${sourceInfo.title || sourceInfo.url}`;
-    
-    // Create button content with favicon and text
-    const content = document.createElement('div');
-    content.style.display = 'flex';
-    content.style.alignItems = 'center';
-    content.style.gap = '4px';
-    
-    if (sourceInfo.favicon) {
-      const favicon = document.createElement('img');
-      favicon.src = sourceInfo.favicon;
-      favicon.className = 'source-favicon';
-      favicon.alt = '';
-      favicon.onerror = () => {
-        // If favicon fails to load, replace with globe icon
-        favicon.style.display = 'none';
-        content.insertAdjacentText('afterbegin', '🌐 ');
-      };
-      content.appendChild(favicon);
-    } else {
-      content.insertAdjacentText('afterbegin', '🌐 ');
-    }
-    
-    const text = document.createElement('span');
-    text.textContent = '';
-    content.appendChild(text);
-    
-    sourceBtn.appendChild(content);
-    
-    sourceBtn.onclick = async (e) => {
-      e.stopPropagation();
-      try {
-        await chrome.tabs.create({ url: sourceInfo.url });
-        if (global.toastManager) {
-          global.toastManager.success('Source Opened', 'Original source opened in new tab');
-        }
-      } catch (error) {
-        console.error('Error opening source URL:', error);
-        if (global.toastManager) {
-          global.toastManager.error('Error', 'Failed to open source URL');
-        }
-      }
-    };
-    
-    container.appendChild(sourceBtn);
-  };
+  // These functions have been deprecated in favor of direct click handlers on images
+  // and more options buttons for additional functionality
 
   // Create global image viewer instance
   ns.imageViewer.viewer = new ns.imageViewer.ImageViewer();

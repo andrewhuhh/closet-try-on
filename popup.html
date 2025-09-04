@@ -6,19 +6,25 @@
   </head>
   <body>
     <div class="container">
-      <h1>Try-it-on</h1>
-      <div class="settings-dropdown">
-        <button id="settings-toggle" class="btn btn-secondary" style="padding: 8px 12px; font-size: 12px;">
-          ⚙️ Settings
-        </button>
-        <div id="settings-menu" class="dropdown-menu" style="display: none;">
-          <button class="dropdown-item" data-setting="avatar-management">
-            👤 Avatar Management
-          </button>
-          <button class="dropdown-item" data-setting="api-settings">
-            🔑 API Settings
-          </button>
+
+      <div class="header-section">
+        <div class="header-title">
+          <h1 style="margin: 0;">Try-it-on</h1>
+          <div class="settings-dropdown">
+            <button id="settings-toggle" class="btn btn-secondary">
+              Settings
+            </button>
+            <div id="settings-menu" class="dropdown-menu" style="display: none;">
+              <button class="dropdown-item" data-setting="avatar-management">
+                Edit Avatar
+              </button>
+              <button class="dropdown-item" data-setting="api-settings">
+                AI Settings
+              </button>
+            </div>
+          </div>
         </div>
+        <span class="subtitle">See yourself in any style instantly</span>
       </div>
 
       <!-- API Key Setup Section -->
@@ -96,18 +102,19 @@
         <div id="avatar-grid" class="avatar-grid">
           <!-- Avatars will be populated here -->
         </div>
-        <button id="regenerate-avatar" class="btn btn-secondary">Regenerate Avatar</button>
+        <div style="display: flex; gap: 8px; margin-top: 16px;">
+          <button id="regenerate-avatar" class="btn btn-secondary">Regenerate Avatar</button>
+          <button id="proceed-to-main" class="btn btn-primary">Next</button>
+        </div>
       </div>
 
       <!-- Main Interface -->
       <div id="main-interface" class="section hidden">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-          <div class="tab-buttons">
-            <button class="tab-btn active" data-tab="outfits">Gallery</button>
-            <button class="tab-btn" data-tab="outfit-builder">Outfit</button>
-            <button class="tab-btn" data-tab="wardrobe">Wardrobe</button>
-            <button class="tab-btn" data-tab="try-on">Latest</button>
-          </div>
+        <div class="tab-buttons" data-active="0">
+          <button class="tab-btn active" data-tab="outfits">Gallery</button>
+          <button class="tab-btn" data-tab="outfit-builder">Outfit</button>
+          <button class="tab-btn" data-tab="wardrobe">Wardrobe</button>
+          <button class="tab-btn" data-tab="try-on">Latest</button>
         </div>
 
         <!-- Outfits Tab -->
@@ -139,18 +146,32 @@
           
           <div class="outfit-builder-section">
             <div class="current-outfit">
-              <h4>Current Outfit (<span id="outfit-item-count">0</span> items)</h4>
+              <span class="subtitle">Current Outfit (<span id="outfit-item-count">0</span> items)</span>
               
               <div id="current-outfit-items" class="outfit-items-grid">
                 <!-- Current outfit items will be displayed here -->
               </div>
               
+              <div class="size-preference-section" style="margin: 12px 0;">
+                <label class="size-preference-label">Size Fitting:</label>
+                <div class="size-preference-toggle">
+                  <input type="radio" id="size-fit" name="sizePreference" value="fit" checked>
+                  <label for="size-fit" class="size-option">Fit to Avatar</label>
+                  <input type="radio" id="size-retain" name="sizePreference" value="retain">
+                  <label for="size-retain" class="size-option">Retain Original</label>
+                </div>
+                <small class="size-preference-help">
+                  Fit to Avatar: Resize clothes to match your avatar's proportions<br>
+                  Retain Original: Keep clothing at original size/proportions
+                </small>
+              </div>
+              
               <div class="outfit-actions">
                 <button id="clear-outfit" class="btn btn-secondary" disabled>
-                  🗑️ Clear Outfit
+                  Clear Items
                 </button>
                 <button id="try-on-outfit" class="btn btn-primary" disabled>
-                  ✨ Try On Complete Outfit
+                  Try On Complete Outfit
                 </button>
               </div>
             </div>
@@ -274,7 +295,7 @@
       <!-- API Settings Section -->
       <div id="api-settings-section" class="section hidden">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-          <h2 style="margin: 0;">API Key Management</h2>
+          <h2 style="margin: 0;">AI Settings</h2>
           <button id="close-api-settings" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px;">
             Back
           </button>
@@ -316,53 +337,55 @@
       <button id="image-viewer-next" class="image-viewer-nav next">›</button>
       
       <div class="image-viewer-content">
-        <img id="image-viewer-image" class="image-viewer-image" alt="Viewing image">
+        <div class="image-viewer-image-container">
+          <img id="image-viewer-image" class="image-viewer-image" alt="Viewing image">
+          
+          <!-- Floating Action Buttons -->
+          <div class="image-viewer-floating-actions">
+
+            <!-- More Options Button -->
+            <button id="more-options-btn" class="image-viewer-action-btn more-options-btn" title="More options">
+              ⋯
+            </button>
+
+            <!-- Regenerate Button (for generated outfits) -->
+            <button id="regenerate-outfit-btn" class="image-viewer-action-btn regenerate-btn" style="display: none;" title="Regenerate with different pose">
+              <img src="assets/regenerate.png" alt="Regenerate" style="width: 20px; height: 20px;">
+            </button>
+          </div>
+          
+          <!-- Regenerate Dropdown -->
+          <div id="regenerate-dropdown" class="image-viewer-dropdown regenerate-dropdown">
+            <div class="dropdown-header">Select Pose:</div>
+            <div id="pose-options" class="pose-options">
+              <!-- Pose options will be populated here -->
+            </div>
+          </div>
+          
+          <!-- More Options Dropdown -->
+          <div id="more-options-dropdown" class="image-viewer-dropdown more-options-dropdown">
+            <button class="dropdown-item" data-action="download">
+              Download
+            </button>
+            <button class="dropdown-item" data-action="copy">
+              Copy Link
+            </button>
+            <button class="dropdown-item" data-action="open">
+              Open in Tab
+            </button>
+            <button class="dropdown-item" data-action="view-source" style="display: none;">
+              View Source
+            </button>
+            <button class="dropdown-item delete" data-action="delete">
+              Delete
+            </button>
+          </div>
+        </div>
         
-        <div class="image-viewer-controls">
-          <div id="image-viewer-info" class="image-viewer-info">
-            <!-- Image info will be populated here -->
-          </div>
-
-          <!-- Original Clothing Items Section -->
-          <div id="original-clothing-section" class="original-clothing-section" style="display: none;">
-            <h4 style="color: white; font-size: 14px; margin: 8px 0 8px 0;">Original Clothing (click to view in wardrobe):</h4>
-            <div id="original-clothing-thumbnails" class="original-clothing-thumbnails">
-              <!-- Original clothing thumbnails will be populated here -->
-            </div>
-          </div>
-
-          <!-- Regeneration Controls -->
-          <div id="regeneration-controls" class="regeneration-controls" style="display: none;">
-            <div style="display: flex; gap: 8px; margin-bottom: 8px;">
-              <select id="pose-selector" class="pose-selector">
-                <option value="">Select pose...</option>
-              </select>
-              <button id="regenerate-outfit" class="image-viewer-btn primary" style="padding: 6px 12px; font-size: 12px;">
-                🔄 Regenerate
-              </button>
-            </div>
-          </div>
-
-          <div class="image-viewer-actions">
-            <button id="open-in-tab" class="image-viewer-btn primary">
-              🔗 Open in Tab
-            </button>
-            
-            <button id="view-source" class="image-viewer-btn secondary" style="display: none;">
-              🌐 View Source
-            </button>
-            
-            <button id="download-image" class="image-viewer-btn secondary">
-              💾 Download
-            </button>
-            
-            <button id="share-image" class="image-viewer-btn secondary">
-              📤 Share
-            </button>
-            
-            <button id="delete-image" class="image-viewer-btn danger">
-              🗑️ Delete
-            </button>
+        <!-- Original Clothing Items Row -->
+        <div id="original-clothing-section" class="original-clothing-section" style="display: none;">
+          <div id="original-clothing-thumbnails" class="original-clothing-thumbnails">
+            <!-- Original clothing thumbnails will be populated here -->
           </div>
         </div>
       </div>
@@ -370,6 +393,20 @@
 
     <!-- Toast Notification Container -->
     <div id="toast-container" class="toast-container"></div>
+
+    <!-- Fixed Footer Command Sheet -->
+    <div class="command-footer">
+      <div class="command-item">
+        <span class="command-text">Right click any image</span>
+        <span class="command-arrow">→</span>
+        <span class="command-action">Add to Wardrobe / Try it On</span>
+      </div>
+      <div class="command-divider">|</div>
+      <div class="command-item">
+        <span class="command-key">Cmd+Shift+Y</span>
+        <span class="command-text">to summon</span>
+      </div>
+    </div>
 
     <!-- Load scripts in dependency order -->
     <!-- 1. Common/Core modules first -->

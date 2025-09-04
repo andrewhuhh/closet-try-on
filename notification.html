@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Try-it-on Notifications</title>
+    <link rel="stylesheet" href="notification.css">
+  </head>
+  <body>
+    <div class="notification-container">
+      <div class="notification-header">
+        <div class="app-title">
+          <span class="app-icon">👕</span>
+          <span>Try-it-on</span>
+        </div>
+        <button id="close-notification" class="close-btn">×</button>
+      </div>
+      
+      <div class="notification-content">
+        <div id="notification-icon" class="notification-icon">
+          <!-- Icon will be set dynamically -->
+        </div>
+        <div class="notification-text">
+          <div id="notification-title" class="notification-title">
+            <!-- Title will be set dynamically -->
+          </div>
+          <div id="notification-message" class="notification-message">
+            <!-- Message will be set dynamically -->
+          </div>
+        </div>
+      </div>
+      
+      <div class="notification-actions">
+        <button id="notification-action" class="action-btn" style="display: none;">
+          <!-- Action button text will be set dynamically -->
+        </button>
+        <button id="open-extension" class="open-extension-btn">
+          Open Extension
+        </button>
+      </div>
+    </div>
+
+    <script src="notification.js"></script>
+  </body>
+</html> 

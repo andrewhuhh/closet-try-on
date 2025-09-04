@@ -18,9 +18,20 @@
 
     // Avatar Loading
     async loadAvatars() {
-      const { avatars, selectedAvatarIndex } = await CTO.storage.get(['avatars', 'selectedAvatarIndex']);
+      const { avatars, selectedAvatarIndex, partialAvatarGeneration } = await CTO.storage.get(['avatars', 'selectedAvatarIndex', 'partialAvatarGeneration']);
       this.avatars = avatars || [];
       this.selectedAvatarIndex = selectedAvatarIndex || 0;
+      this.partialAvatarGeneration = partialAvatarGeneration || false;
+      
+      // If we have avatars and some are in a failed state, show the retry interface
+      if (this.avatars.length > 0 && this.partialAvatarGeneration) {
+        // Ensure we have a proper retry interface when the page loads
+        setTimeout(() => {
+          if (document.getElementById('avatar-grid')) {
+            this.displayAvatarsWithRetry();
+          }
+        }, 100);
+      }
     }
 
     // Avatar Generation
@@ -157,30 +168,57 @@
         const photoDataArray = await Promise.all(photoPromises);
 
         // Generate avatar using Gemini API
-        const avatars = await CTO.api.callAvatarGenerationAPI(photoDataArray, CTO.storage.get.bind(CTO.storage));
+        const result = await CTO.api.callAvatarGenerationAPI(photoDataArray, CTO.storage.get.bind(CTO.storage));
 
-        // Save avatars
-        await CTO.storage.set({ 
-          avatars, 
-          avatarGenerated: true,
-          avatarGeneratedAt: new Date().toISOString()
-        });
+        // Handle partial success
+        if (result.partialSuccess) {
+          // Show partial success message
+          CTO.ui.manager.showStatus(`Generated ${result.successCount} of ${result.totalRequested} avatars successfully. You can retry the failed poses below.`, 'warning');
+          
+          // Save partial results
+          await CTO.storage.set({ 
+            avatars: result.avatars, 
+            avatarGenerated: true,
+            avatarGeneratedAt: new Date().toISOString(),
+            partialAvatarGeneration: true
+          });
+          
+          this.avatars = result.avatars;
+          
+          // Show avatar gallery with retry options
+          setTimeout(() => {
+            CTO.ui.manager.showSection('avatar-gallery-section');
+            this.displayAvatarsWithRetry();
+          }, 1500);
+          
+        } else if (result.successCount === 0) {
+          // Complete failure
+          throw new Error('No avatar images were generated. Please try with different photos.');
+        } else {
+          // Complete success
+          await CTO.storage.set({ 
+            avatars: result.avatars, 
+            avatarGenerated: true,
+            avatarGeneratedAt: new Date().toISOString(),
+            partialAvatarGeneration: false
+          });
 
-        this.avatars = avatars;
-        
-        // Show toast notification with navigation
-        if (global.toastManager) {
-          global.toastManager.avatarGenerated(() => {
+          this.avatars = result.avatars;
+          
+          // Show toast notification with navigation
+          if (global.toastManager) {
+            global.toastManager.avatarGenerated(() => {
+              CTO.ui.manager.showSection('avatar-gallery-section');
+              this.displayAvatars();
+            });
+          }
+
+          // Show avatar gallery
+          setTimeout(() => {
             CTO.ui.manager.showSection('avatar-gallery-section');
             this.displayAvatars();
-          });
+          }, 1500);
         }
-
-        // Show avatar gallery
-        setTimeout(() => {
-          CTO.ui.manager.showSection('avatar-gallery-section');
-          this.displayAvatars();
-        }, 1500);
 
       } catch (error) {
         this.handleApiError(error, 'generating avatar');
@@ -215,13 +253,233 @@
         img.src = avatar.url;
         img.alt = `Avatar ${index + 1} - ${avatar.pose}`;
 
+        // Add view button if the global function exists
+        if (global.addViewButtonToImage) {
+          const avatarCollection = this.avatars.map((avatar, idx) => ({
+            url: avatar.url,
+            info: {
+              type: 'Avatar',
+              pose: avatar.pose,
+              createdAt: avatar.createdAt,
+              index: idx + 1
+            }
+          }));
+          global.addViewButtonToImage(avatarItem, avatar.url, {
+            type: 'Avatar',
+            pose: avatar.pose,
+            createdAt: avatar.createdAt,
+            index: index + 1
+          }, avatarCollection, index);
+        }
+
         avatarItem.appendChild(img);
         avatarItem.addEventListener('click', () => this.selectAvatar(index));
         avatarGrid.appendChild(avatarItem);
       });
     }
 
+    // Avatar Display with Retry Options
+    displayAvatarsWithRetry() {
+      const avatarGrid = document.getElementById('avatar-grid');
+      if (!avatarGrid) return;
+
+      avatarGrid.innerHTML = '';
+
+      this.avatars.forEach((avatar, index) => {
+        const avatarItem = document.createElement('div');
+        avatarItem.className = 'avatar-item';
+        if (index === this.selectedAvatarIndex && !avatar.failed) {
+          avatarItem.classList.add('selected');
+        }
+
+        if (avatar.failed) {
+          // Create placeholder for failed avatar
+          avatarItem.classList.add('failed-avatar');
+          
+          const placeholder = document.createElement('div');
+          placeholder.className = 'avatar-placeholder';
+          placeholder.innerHTML = `
+            <div class="placeholder-icon">❌</div>
+            <div class="placeholder-text">
+              <div class="pose-label">${avatar.poseLabel}</div>
+              <div class="failed-message">Generation failed</div>
+            </div>
+            <button class="retry-btn" data-pose-index="${index}">
+              <span class="retry-icon">🔄</span> Retry
+            </button>
+          `;
+          
+          avatarItem.appendChild(placeholder);
+        } else {
+          // Display successful avatar
+          const img = document.createElement('img');
+          img.src = avatar.url;
+          img.alt = `Avatar ${index + 1} - ${avatar.pose}`;
+
+          // Add view button if the global function exists
+          if (global.addViewButtonToImage) {
+            const avatarCollection = this.avatars.filter(a => !a.failed).map((avatar, idx) => ({
+              url: avatar.url,
+              info: {
+                type: 'Avatar',
+                pose: avatar.pose,
+                createdAt: avatar.createdAt,
+                index: idx + 1
+              }
+            }));
+            global.addViewButtonToImage(avatarItem, avatar.url, {
+              type: 'Avatar',
+              pose: avatar.pose,
+              createdAt: avatar.createdAt,
+              index: index + 1
+            }, avatarCollection, index);
+          }
+
+          avatarItem.appendChild(img);
+          avatarItem.addEventListener('click', () => this.selectAvatar(index));
+        }
+
+        avatarGrid.appendChild(avatarItem);
+      });
+
+      // Add event listeners for retry buttons
+      avatarGrid.addEventListener('click', (e) => {
+        if (e.target.classList.contains('retry-btn') || e.target.closest('.retry-btn')) {
+          const retryBtn = e.target.classList.contains('retry-btn') ? e.target : e.target.closest('.retry-btn');
+          const poseIndex = parseInt(retryBtn.dataset.poseIndex);
+          this.retryFailedPose(poseIndex);
+        }
+      });
+    }
+
+    async retryFailedPose(poseIndex) {
+      const avatar = this.avatars[poseIndex];
+      if (!avatar || !avatar.failed) return;
+
+      const retryBtn = document.querySelector(`[data-pose-index="${poseIndex}"]`);
+      if (retryBtn) {
+        retryBtn.disabled = true;
+        retryBtn.innerHTML = '<span class="retry-icon">⏳</span> Retrying...';
+      }
+
+      try {
+        // Get the original photos used for generation
+        if (this.uploadedPhotos.length < 3) {
+          throw new Error('Original photos not available. Please regenerate all avatars.');
+        }
+
+        // Compress photos again
+        const compressionOptions = { 
+          maxDimension: 1200, 
+          targetMaxBytes: 1200000, 
+          quality: 0.85, 
+          minQuality: 0.5 
+        };
+        
+        const photoPromises = this.uploadedPhotos.map(async (file) => {
+          return await CTO.image.compressToBase64JPEG(file, compressionOptions);
+        });
+
+        const photoDataArray = await Promise.all(photoPromises);
+
+        // Create a specific prompt for this pose
+        const posePrompts = {
+          'front-neutral': 'Generate 1 realistic avatar image of this person in a neutral front-facing pose: standing, facing the camera directly, arms relaxed at sides.',
+          'front-open': 'Generate 1 realistic avatar image of this person in a front-facing open stance: standing, facing the camera directly, arms slightly apart from the body, legs slightly apart.',
+          'three-quarter': 'Generate 1 realistic avatar image of this person in a three-quarter angle pose: standing at a ¾ angle (about 45° to camera), upright, arms relaxed.',
+          'side-profile': 'Generate 1 realistic avatar image of this person in a side profile pose: standing in a full side profile (90° angle to camera), arms relaxed.'
+        };
+
+        const specificPrompt = posePrompts[avatar.pose] || posePrompts['front-neutral'];
+        const fullPrompt = `${specificPrompt} Use the provided photos to capture identity, face, hairstyle, body type, and skin tone. Dress in plain white/grey T-shirt, black/grey/neutral shorts (not long pants), neutral shoes if visible. The shorts should be mid-thigh length for optimal outfit layering. Use a plain white background. Generate a high-resolution, realistic photo result.\n\nIMAGE SPECIFICATIONS:\n- Generate the image in portrait orientation with dimensions 768 pixels wide by 1152 pixels tall\n- Use JPEG format for the output image\n- Ensure high quality and clarity at these specific dimensions`;
+
+        // Call API for single pose
+        const result = await this.generateSinglePose(photoDataArray, fullPrompt);
+        
+        if (result && result.url) {
+          // Update the avatar in our array
+          this.avatars[poseIndex] = {
+            url: result.url,
+            pose: avatar.pose,
+            poseLabel: avatar.poseLabel,
+            failed: false,
+            createdAt: new Date().toISOString()
+          };
+
+          // Save updated avatars
+          await CTO.storage.set({ 
+            avatars: this.avatars,
+            partialAvatarGeneration: this.avatars.some(a => a.failed)
+          });
+
+          // Refresh display
+          this.displayAvatarsWithRetry();
+
+          CTO.ui.manager.showStatus(`Successfully generated ${avatar.poseLabel} avatar!`, 'success');
+        } else {
+          throw new Error('Failed to generate avatar for this pose');
+        }
+
+      } catch (error) {
+        console.error('Error retrying pose:', error);
+        CTO.ui.manager.showStatus(`Failed to retry ${avatar.poseLabel}: ${error.message}`, 'error');
+        
+        // Reset retry button
+        if (retryBtn) {
+          retryBtn.disabled = false;
+          retryBtn.innerHTML = '<span class="retry-icon">🔄</span> Retry';
+        }
+      }
+    }
+
+    async generateSinglePose(photoDataArray, prompt) {
+      const API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent';
+      const { apiKey } = await CTO.storage.get('apiKey');
+      
+      const contents = [
+        {
+          role: 'user',
+          parts: [
+            { text: prompt },
+            ...photoDataArray.map(data => ({ inlineData: { mimeType: 'image/jpeg', data } }))
+          ]
+        }
+      ];
+
+      const response = await fetch(`${API_URL}?key=${encodeURIComponent(apiKey)}`, {
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents, generationConfig: { responseModalities: ['text', 'image'] } })
+      });
+
+      if (!response.ok) {
+        throw new Error(`API request failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const parts = data?.candidates?.[0]?.content?.parts || [];
+      const generatedImage = parts.find(part => part.inlineData && part.inlineData.mimeType && part.inlineData.mimeType.startsWith('image/'));
+      
+      if (!generatedImage) {
+        throw new Error('No image generated in response');
+      }
+
+      const mime = generatedImage.inlineData.mimeType || 'image/png';
+      const base64 = generatedImage.inlineData.data || '';
+      const dataUrl = `data:${mime};base64,${base64}`;
+      
+      // Convert to JPEG
+      const jpegDataUrl = await global.CTO.image.convertToJPEG(dataUrl);
+      
+      return { url: jpegDataUrl };
+    }
+
     selectAvatar(index) {
+      // Don't allow selecting failed avatars
+      if (this.avatars[index] && this.avatars[index].failed) {
+        return;
+      }
+      
       this.selectedAvatarIndex = index;
       this.displayAvatars();
       CTO.storage.set({ selectedAvatarIndex: index });

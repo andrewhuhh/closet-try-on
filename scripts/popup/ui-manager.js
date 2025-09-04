@@ -19,6 +19,16 @@
       if (targetSection) {
         targetSection.classList.remove('hidden');
         this.activeSection = sectionId;
+        
+        // Hide header-section for avatar management and api settings
+        const headerSection = document.querySelector('.header-section');
+        if (headerSection) {
+          if (sectionId === 'avatar-management-section' || sectionId === 'api-settings-section') {
+            headerSection.style.display = 'none';
+          } else {
+            headerSection.style.display = '';
+          }
+        }
       } else {
         console.error(`Section with id '${sectionId}' not found`);
       }
@@ -35,6 +45,14 @@
       document.querySelectorAll('.tabs').forEach(tab => {
         tab.classList.toggle('active', tab.id === `${tabName}-tab`);
       });
+
+      // Update sliding highlight position
+      const tabButtons = document.querySelector('.tab-buttons');
+      const tabOrder = ['outfits', 'outfit-builder', 'wardrobe', 'try-on'];
+      const activeIndex = tabOrder.indexOf(tabName);
+      if (tabButtons && activeIndex !== -1) {
+        tabButtons.setAttribute('data-active', activeIndex);
+      }
 
       this.activeTab = tabName;
 

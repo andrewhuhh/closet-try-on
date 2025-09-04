@@ -12,6 +12,21 @@
   "action": {
     "default_popup": "popup.html"
   },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "mac": "Command+Shift+Y"
+      },
+      "description": "Open Closet Try-On popup"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["notification.html", "notification.css", "notification.js", "test-notification.html"],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "icons": {
     "16": "icons/16.png",
     "32": "icons/32.png",

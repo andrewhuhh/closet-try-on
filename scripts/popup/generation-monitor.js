@@ -7,7 +7,12 @@
     constructor() {
       this.generationCheckInterval = null;
       this.elapsedTimeInterval = null;
+      this.generationTimeoutId = null;
       this.isMonitoring = false;
+      
+      // Timeout configuration
+      this.TIMEOUT_DURATION = 1 * 60 * 1000; // 1 minute in milliseconds
+      this.TIMEOUT_WARNING_DURATION = 30 * 1000; // 30 seconds - show warning
     }
 
     // Initialization
@@ -18,8 +23,10 @@
         if (inProgress) {
           this.showGenerationLoading(new Date().toISOString());
           this.startGenerationStatusMonitoring();
+          this.startGenerationTimeout(); // Start timeout timer
         } else {
           this.hideGenerationLoading();
+          this.clearGenerationTimeout(); // Clear timeout timer
         }
       });
 
@@ -38,6 +45,9 @@
     // Main Status Checking
     async checkAndShowGenerationStatus() {
       try {
+        // First, try to get fresh status from background script
+        await this.syncWithBackgroundScript();
+        
         const { generationInProgress, generationStartTime } = await CTO.storage.get([
           'generationInProgress', 'generationStartTime'
         ]);
@@ -49,13 +59,39 @@
           this.showGenerationLoading(generationStartTime);
           if (!this.isMonitoring) {
             this.startGenerationStatusMonitoring();
+            this.startGenerationTimeout(generationStartTime); // Start timeout with existing start time
           }
         } else {
           console.log('No generation in progress, hiding loading state');
           this.hideGenerationLoading();
+          this.clearGenerationTimeout();
+          
+          // Refresh outfit displays to ensure they're up to date
+          // This handles the case where generation completed while popup was closed
+          if (CTO.outfit.manager) {
+            await CTO.outfit.manager.loadOutfits();
+            await CTO.outfit.manager.loadLatestTryOn();
+          }
         }
       } catch (error) {
         console.error('Error checking generation status:', error);
+      }
+    }
+
+    // Sync with background script to get latest generation status
+    async syncWithBackgroundScript() {
+      try {
+        const response = await chrome.runtime.sendMessage({ action: 'getGenerationStatus' });
+        if (response && response.inProgress !== undefined) {
+          // Update storage with authoritative status from background script
+          await CTO.storage.set({
+            generationInProgress: response.inProgress,
+            generationStartTime: response.startTime
+          });
+          console.log('Synced generation status with background:', response);
+        }
+      } catch (error) {
+        console.log('Could not sync with background script (may be normal):', error.message);
       }
     }
 
@@ -101,6 +137,7 @@
       // Stop timers
       this.stopGenerationStatusMonitoring();
       this.stopElapsedTimeCounters();
+      this.clearGenerationTimeout(); // Clear timeout when hiding loading
     }
 
     // Elapsed Time Counters
@@ -308,6 +345,7 @@
     cleanup() {
       this.stopGenerationStatusMonitoring();
       this.stopElapsedTimeCounters();
+      this.clearGenerationTimeout();
     }
 
     // Visibility Change Handling
@@ -336,6 +374,135 @@
       window.addEventListener('beforeunload', () => {
         this.cleanup();
       });
+    }
+
+    // Timeout Management
+    startGenerationTimeout(startTime = null) {
+      this.clearGenerationTimeout(); // Clear any existing timeout
+      
+      const now = new Date();
+      const start = startTime ? new Date(startTime) : now;
+      const elapsed = now - start;
+      const remainingTimeout = Math.max(0, this.TIMEOUT_DURATION - elapsed);
+      const remainingWarning = Math.max(0, this.TIMEOUT_WARNING_DURATION - elapsed);
+      
+      console.log('Starting generation timeout:', {
+        elapsed: elapsed / 1000,
+        remainingTimeout: remainingTimeout / 1000,
+        remainingWarning: remainingWarning / 1000
+      });
+      
+      // Set warning timeout if we haven't passed the warning time
+      if (remainingWarning > 0) {
+        setTimeout(() => {
+          this.showTimeoutWarning();
+        }, remainingWarning);
+      } else if (elapsed >= this.TIMEOUT_WARNING_DURATION && elapsed < this.TIMEOUT_DURATION) {
+        // We're already in warning period
+        this.showTimeoutWarning();
+      }
+      
+      // Set main timeout if we haven't passed the timeout time
+      if (remainingTimeout > 0) {
+        this.generationTimeoutId = setTimeout(() => {
+          this.handleGenerationTimeout();
+        }, remainingTimeout);
+      } else if (elapsed >= this.TIMEOUT_DURATION) {
+        // Generation has already timed out
+        this.handleGenerationTimeout();
+      }
+    }
+    
+    clearGenerationTimeout() {
+      if (this.generationTimeoutId) {
+        clearTimeout(this.generationTimeoutId);
+        this.generationTimeoutId = null;
+      }
+      this.hideTimeoutWarning();
+    }
+    
+    showTimeoutWarning() {
+      // Add warning styling to loading widgets
+      const outfitLoading = document.getElementById('outfit-loading');
+      const tryonLoading = document.getElementById('tryon-loading');
+      
+      [outfitLoading, tryonLoading].forEach(loading => {
+        if (loading && loading.style.display === 'flex') {
+          loading.classList.add('timeout-warning');
+          
+          // Update loading text to show warning
+          const titleElement = loading.querySelector('.loading-title');
+          if (titleElement) {
+            titleElement.innerHTML = '⚠️ Generation Taking Longer Than Expected...';
+          }
+        }
+      });
+      
+      // Show toast warning
+      if (global.toastManager) {
+        global.toastManager.warning(
+          'Generation Delay', 
+          'Try-on generation is taking longer than expected. It will timeout in 1 minute if not completed.', 
+          {
+            duration: 8000,
+            icon: '⏱️',
+            clickAction: () => {
+              CTO.ui.manager.switchTab('outfits');
+            }
+          }
+        );
+      }
+    }
+    
+    hideTimeoutWarning() {
+      // Remove warning styling from loading widgets
+      const outfitLoading = document.getElementById('outfit-loading');
+      const tryonLoading = document.getElementById('tryon-loading');
+      
+      [outfitLoading, tryonLoading].forEach(loading => {
+        if (loading) {
+          loading.classList.remove('timeout-warning');
+          
+          // Restore original loading text
+          const titleElement = loading.querySelector('.loading-title');
+          if (titleElement) {
+            if (loading.id === 'outfit-loading') {
+              titleElement.innerHTML = '🎨 Generating Your Try-On...';
+            } else if (loading.id === 'tryon-loading') {
+              titleElement.innerHTML = '✨ Creating Your Look...';
+            }
+          }
+        }
+      });
+    }
+    
+    async handleGenerationTimeout() {
+      console.log('Generation timeout reached, clearing status');
+      
+      // Clear generation status
+      await this.setGenerationStatus(false);
+      
+      // Show timeout error with retry option
+      if (global.toastManager) {
+        global.toastManager.error(
+          'Generation Timeout', 
+          'Try-on generation timed out after 1 minute. Click here for retry instructions.', 
+          {
+            duration: 10000,
+            icon: '⏰',
+            clickAction: () => {
+              // Show retry instructions
+              global.toastManager.info(
+                'How to Retry',
+                'Right-click on the clothing item again to retry the try-on generation.',
+                { duration: 5000, icon: '🔄' }
+              );
+            }
+          }
+        );
+      }
+      
+      this.clearGenerationTimeout();
     }
   };
 

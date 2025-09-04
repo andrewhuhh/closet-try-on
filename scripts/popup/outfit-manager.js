@@ -10,6 +10,37 @@
       this.clothingItems = [];
     }
 
+    // Utility function to generate meaningful names for clothing items
+    generateItemName(item) {
+      // Try to extract name from source title if available
+      if (item.source && item.source.title) {
+        // Clean up common e-commerce patterns and get the most descriptive part
+        let title = item.source.title
+          .replace(/\s*-\s*[^-]*(?:shop|store|buy|sale|price|\$|€|£).*$/i, '') // Remove shop/price info
+          .replace(/\s*\|\s*.*$/i, '') // Remove everything after |
+          .replace(/\s*\(\s*\d+.*?\)\s*$/i, '') // Remove size/price in parentheses
+          .replace(/\s*(buy|shop|store|sale|online|cheap|best|new).*$/i, '') // Remove common e-commerce terms
+          .trim();
+        
+        // If we have a meaningful title, use it
+        if (title.length > 3) {
+          return title;
+        }
+      }
+      
+      // Fallback to generic name based on item type or index
+      const addedDate = new Date(item.addedAt);
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                          'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return `Item ${monthNames[addedDate.getMonth()]}-${addedDate.getDate()}`;
+    }
+
+    // Utility function to truncate text with ellipsis
+    truncateText(text, maxLength = 10) {
+      if (text.length <= maxLength) return text;
+      return text.substring(0, maxLength) + '...';
+    }
+
     // Initialization
     async init() {
       await this.loadCurrentOutfit();
@@ -24,7 +55,22 @@
     }
 
     async saveCurrentOutfit() {
-      await CTO.storage.set({ currentOutfit: this.currentOutfit });
+      try {
+        await CTO.storage.set({ currentOutfit: this.currentOutfit });
+      } catch (error) {
+        console.error('Error saving current outfit:', error);
+        if (error.message && error.message.includes('quota')) {
+          if (global.toastManager) {
+            global.toastManager.error('Storage Full', 'Unable to save outfit - storage quota exceeded. Click to manage storage.', {
+              duration: 8000,
+              clickAction: () => {
+                this.showStorageManagement();
+              }
+            });
+          }
+        }
+        throw error; // Re-throw so calling code knows it failed
+      }
     }
 
     async addToOutfit(item) {
@@ -38,20 +84,89 @@
 
       // Add item to outfit
       this.currentOutfit.push(item);
-      await this.saveCurrentOutfit();
+      
+      try {
+        await this.saveCurrentOutfit();
 
-      // Update displays
-      this.updateOutfitDisplay();
-      await this.loadWardrobeForOutfit(); // Refresh to update button states
+        // Update displays
+        this.updateOutfitDisplay();
+        await this.loadWardrobeForOutfit(); // Refresh to update button states
 
-      if (global.toastManager) {
-        global.toastManager.success('Item Added!', `${this.currentOutfit.length} item${this.currentOutfit.length !== 1 ? 's' : ''} in outfit`, {
-          icon: '👕',
-          clickAction: () => {
-            // Already on outfit builder, just focus the current outfit area
-          },
-          duration: 2000
-        });
+        if (global.toastManager) {
+          global.toastManager.success('Item Added!', `${this.currentOutfit.length} item${this.currentOutfit.length !== 1 ? 's' : ''} in outfit`, {
+            icon: '👕',
+            clickAction: () => {
+              // Already on outfit builder, just focus the current outfit area
+            },
+            duration: 2000
+          });
+        }
+      } catch (error) {
+        // Revert the addition if save failed
+        this.currentOutfit.pop();
+        console.error('Failed to add item to outfit:', error);
+        
+        // Display appropriate error message based on error type
+        if (error.message && error.message.includes('quota')) {
+          // Storage quota exceeded - offer storage management
+          if (global.toastManager) {
+            global.toastManager.error('Storage Full', 'Cannot add item - storage quota exceeded. Click to manage storage.', {
+              duration: 8000,
+              clickAction: () => {
+                this.showStorageManagement();
+              }
+            });
+          }
+        } else {
+          // Other storage error
+          if (global.toastManager) {
+            global.toastManager.error('Save Failed', 'Could not save item to outfit. Please try again.');
+          }
+        }
+      }
+    }
+
+    async addOutfitImageToWardrobe(outfit) {
+      try {
+        // Create a clothing item from the generated outfit image
+        const clothingItem = {
+          url: outfit.generatedImage,
+          addedAt: new Date().toISOString(),
+          source: {
+            title: `Generated Outfit ${new Date(outfit.createdAt).toLocaleDateString()}`,
+            url: null, // No external source for generated images
+            imageUrl: outfit.generatedImage
+          }
+        };
+
+        // Get existing wardrobe and check for duplicates
+        const { clothingItems = [] } = await CTO.storage.get('clothingItems');
+        
+        // Check if this outfit image is already in wardrobe
+        if (clothingItems.some(item => item.url === outfit.generatedImage)) {
+          if (global.toastManager) {
+            global.toastManager.wardrobeItemExists('Generated Outfit');
+          }
+          return;
+        }
+
+        // Add to wardrobe
+        clothingItems.push(clothingItem);
+        await CTO.storage.set({ clothingItems });
+
+        // Reload wardrobe to reflect changes
+        await this.loadWardrobe();
+
+        if (global.toastManager) {
+          global.toastManager.wardrobeItemAdded('Generated Outfit', () => {
+            document.querySelector('button[data-tab="wardrobe"]').click();
+          });
+        }
+      } catch (error) {
+        console.error('Error adding outfit to wardrobe:', error);
+        if (global.toastManager) {
+          global.toastManager.error('Save Failed', 'Could not add outfit to wardrobe');
+        }
       }
     }
 
@@ -138,7 +253,7 @@
 
           const removeBtn = document.createElement('button');
           removeBtn.className = 'outfit-item-remove';
-          removeBtn.textContent = '×';
+          removeBtn.textContent = '-';
           removeBtn.onclick = () => this.removeFromOutfit(index);
 
           outfitItemCard.appendChild(img);
@@ -187,8 +302,8 @@
       document.dispatchEvent(event);
 
       try {
-        // Get avatar and API key
-        const { apiKey, avatars, selectedAvatarIndex = 0 } = await CTO.storage.get(['apiKey', 'avatars', 'selectedAvatarIndex']);
+        // Get avatar, API key, and size preference
+        const { apiKey, avatars, selectedAvatarIndex = 0, sizePreference = 'fit' } = await CTO.storage.get(['apiKey', 'avatars', 'selectedAvatarIndex', 'sizePreference']);
         
         if (!apiKey) {
           throw new Error('API key required');
@@ -213,8 +328,8 @@
           this.currentOutfit.map(item => CTO.image.imageUrlToBase64(item.url))
         );
 
-        // Generate outfit try-on using Gemini API
-        const generatedImageUrl = await CTO.api.callMultiItemTryOnAPI(baseImageData, clothingDataArray, apiKey);
+        // Generate outfit try-on using Gemini API with size preference
+        const generatedImageUrl = await CTO.api.callMultiItemTryOnAPI(baseImageData, clothingDataArray, apiKey, sizePreference);
 
         // Store the generated outfit
         await this.storeGeneratedMultiItemOutfit(generatedImageUrl, this.currentOutfit, selectedAvatar);
@@ -308,6 +423,10 @@
         outfitItem.className = 'outfit-item';
         outfitItem.style.position = 'relative';
 
+        // Create image container div
+        const imgContainer = document.createElement('div');
+        imgContainer.className = 'outfit-item-image-container';
+
         const img = document.createElement('img');
         img.src = outfit.generatedImage;
         img.alt = 'Generated outfit';
@@ -315,26 +434,45 @@
         const info = document.createElement('div');
         info.className = 'info';
         
-        const dateText = new Date(outfit.createdAt).toLocaleDateString();
-        const avatarText = outfit.usedAvatar ? ` • ${outfit.usedAvatar.pose}` : '';
-        const itemCount = outfit.isMultiItem ? outfit.outfitItems?.length || 1 : (outfit.clothingItems?.length || 1);
-        const typeText = ` • ${itemCount} item${itemCount > 1 ? 's' : ''}`;
-        info.textContent = dateText + avatarText + typeText;
+        // Generate a meaningful name for the outfit
+        const outfitName = `Outfit ${new Date(outfit.createdAt).toLocaleDateString().replace(/\//g, '-')}`;
+        info.textContent = this.truncateText(outfitName, 10);
 
-        // Add view button if the global function exists
-        if (global.addViewButtonToImage) {
-          global.addViewButtonToImage(outfitItem, outfit.generatedImage, {
-            type: outfit.isMultiItem ? 'Multi-Item Outfit' : 'Generated Outfit',
-            createdAt: outfit.createdAt,
-            usedAvatar: outfit.usedAvatar,
-            itemCount: itemCount,
-            index: index + 1,
-            originalData: outfit // Pass the full outfit data
-          }, outfitCollection, index);
-        }
+        // Add to wardrobe button for generated outfits
+        const addBtn = document.createElement('button');
+        addBtn.className = 'add-to-outfit-btn';
+        addBtn.innerHTML = '+';
+        addBtn.style.lineHeight = '1';
+        addBtn.onclick = (e) => {
+          e.stopPropagation(); // Prevent triggering other click events
+          this.addOutfitImageToWardrobe(outfit);
+        };
 
-        outfitItem.appendChild(img);
+        // Add click handler for image to open viewer
+        img.onclick = (e) => {
+          // Only open viewer if not clicking on buttons
+          if (!e.target.closest('.add-to-outfit-btn') && !e.target.closest('.more-options-btn')) {
+            if (global.CTO?.imageViewer?.viewer) {
+              global.CTO.imageViewer.viewer.openImageViewer(outfit.generatedImage, {
+                type: outfit.isMultiItem ? 'Multi-Item Outfit' : 'Generated Outfit',
+                createdAt: outfit.createdAt,
+                usedAvatar: outfit.usedAvatar,
+                itemCount: outfit.isMultiItem ? outfit.outfitItems?.length || 1 : (outfit.clothingItems?.length || 1),
+                index: index + 1,
+                originalData: outfit // Pass the full outfit data
+              }, outfitCollection, index);
+            }
+          }
+        };
+
+        // Add more options for generated outfits
+        this.addMoreOptionsToOutfit(outfitItem, outfit, index);
+
+        // Append img to container, then add elements to outfit item
+        imgContainer.appendChild(img);
+        outfitItem.appendChild(imgContainer);
         outfitItem.appendChild(info);
+        outfitItem.appendChild(addBtn);
         outfitGallery.appendChild(outfitItem);
       });
     }
@@ -377,14 +515,19 @@
       img.style.width = '100%';
       img.style.borderRadius = '8px';
 
-      // Add view button to latest try-on if the global function exists
-      if (global.addViewButtonToImage) {
-        global.addViewButtonToImage(imageContainer, latest.generatedImage, {
-          type: 'Latest Try-On Result',
-          createdAt: latest.createdAt,
-          usedAvatar: latest.usedAvatar
-        });
-      }
+      // Add click handler for image to open viewer
+      img.onclick = (e) => {
+        if (global.CTO?.imageViewer?.viewer) {
+          global.CTO.imageViewer.viewer.openImageViewer(latest.generatedImage, {
+            type: 'Latest Try-On Result',
+            createdAt: latest.createdAt,
+            usedAvatar: latest.usedAvatar
+          });
+        }
+      };
+
+      // Make image cursor pointer to indicate it's clickable
+      img.style.cursor = 'pointer';
 
       const info = document.createElement('p');
       const dateText = `Generated on ${new Date(latest.createdAt).toLocaleString()}`;
@@ -436,31 +579,56 @@
         wardrobeItem.className = 'outfit-item';
         wardrobeItem.style.position = 'relative';
 
+        // Create image container div
+        const imgContainer = document.createElement('div');
+        imgContainer.className = 'outfit-item-image-container';
+
         const img = document.createElement('img');
         img.src = item.url;
         img.alt = 'Saved clothing item';
 
         const info = document.createElement('div');
         info.className = 'info';
-        info.textContent = new Date(item.addedAt).toLocaleDateString();
+        const itemName = this.generateItemName(item);
+        info.textContent = this.truncateText(itemName, 10);
 
-        // Add source link button if available and global function exists
-        if (item.source?.url && global.addSourceButtonToImage) {
-          global.addSourceButtonToImage(wardrobeItem, item.source);
+        // Add to outfit button for wardrobe items
+        const addBtn = document.createElement('button');
+        addBtn.className = 'add-to-outfit-btn';
+        addBtn.innerHTML = '+';
+        addBtn.style.lineHeight = '1';
+        addBtn.onclick = (e) => {
+          e.stopPropagation(); // Prevent triggering other click events
+          this.addToOutfit(item);
+        };
+
+        // Add click handler for image to open viewer
+        img.onclick = (e) => {
+          // Only open viewer if not clicking on buttons
+          if (!e.target.closest('.add-to-outfit-btn') && !e.target.closest('.more-options-btn')) {
+            if (global.CTO?.imageViewer?.viewer) {
+              global.CTO.imageViewer.viewer.openImageViewer(item.url, {
+                type: 'Clothing Item',
+                addedAt: item.addedAt,
+                index: index + 1,
+                source: item.source // Include source information
+              }, wardrobeCollection, index);
+            } else {
+              console.error('Image viewer not available');
+            }
+          }
+        };
+
+        // Add more options button and dropdown
+        if (item.source?.url || global.CTO?.imageViewer?.viewer) {
+          this.addMoreOptionsToItem(wardrobeItem, item, index);
         }
 
-        // Add view button if global function exists
-        if (global.addViewButtonToImage) {
-          global.addViewButtonToImage(wardrobeItem, item.url, {
-            type: 'Clothing Item',
-            addedAt: item.addedAt,
-            index: index + 1,
-            source: item.source // Include source information
-          }, wardrobeCollection, index);
-        }
-
-        wardrobeItem.appendChild(img);
+        // Append img to container, then add elements to wardrobe item
+        imgContainer.appendChild(img);
+        wardrobeItem.appendChild(imgContainer);
         wardrobeItem.appendChild(info);
+        wardrobeItem.appendChild(addBtn);
         wardrobeGallery.appendChild(wardrobeItem);
       });
     }
@@ -486,13 +654,18 @@
         wardrobeItem.className = 'outfit-item';
         wardrobeItem.style.position = 'relative';
 
+        // Create image container div
+        const imgContainer = document.createElement('div');
+        imgContainer.className = 'outfit-item-image-container';
+
         const img = document.createElement('img');
         img.src = item.url;
         img.alt = 'Wardrobe item';
 
         const info = document.createElement('div');
         info.className = 'info';
-        info.textContent = new Date(item.addedAt).toLocaleDateString();
+        const itemName = this.generateItemName(item);
+        info.textContent = this.truncateText(itemName, 10);
 
         // Check if item is already in outfit
         const isInOutfit = this.currentOutfit.some(outfitItem => outfitItem.url === item.url);
@@ -500,35 +673,46 @@
         // Add to outfit button
         const addBtn = document.createElement('button');
         addBtn.className = `add-to-outfit-btn ${isInOutfit ? 'added' : ''}`;
-        addBtn.textContent = isInOutfit ? '✓ Added' : '+ Add';
+        addBtn.innerHTML = isInOutfit ? '✓' : '+';
+        addBtn.style.lineHeight = '1';
         addBtn.disabled = isInOutfit;
-        addBtn.onclick = () => this.addToOutfit(item);
+        addBtn.onclick = (e) => {
+          e.stopPropagation(); // Prevent triggering other click events
+          this.addToOutfit(item);
+        };
 
-        // Add source link button if available and global function exists
-        if (item.source?.url && global.addSourceButtonToImage) {
-          global.addSourceButtonToImage(wardrobeItem, item.source);
-        }
-
-        // Add view button for the clothing item if global function exists
-        if (global.addViewButtonToImage) {
-          const wardrobeCollection = this.clothingItems.map((wardrobeItem, idx) => ({
-            url: wardrobeItem.url,
-            info: {
-              type: 'Clothing Item',
-              addedAt: wardrobeItem.addedAt,
-              index: idx + 1,
-              source: wardrobeItem.source
+        // Add click handler for image to open viewer
+        img.onclick = (e) => {
+          // Only open viewer if not clicking on buttons
+          if (!e.target.closest('.add-to-outfit-btn') && !e.target.closest('.more-options-btn')) {
+            if (global.CTO?.imageViewer?.viewer) {
+              const wardrobeCollection = this.clothingItems.map((wardrobeItem, idx) => ({
+                url: wardrobeItem.url,
+                info: {
+                  type: 'Clothing Item',
+                  addedAt: wardrobeItem.addedAt,
+                  index: idx + 1,
+                  source: wardrobeItem.source
+                }
+              }));
+              global.CTO.imageViewer.viewer.openImageViewer(item.url, {
+                type: 'Clothing Item',
+                addedAt: item.addedAt,
+                index: index + 1,
+                source: item.source
+              }, wardrobeCollection, index);
             }
-          }));
-          global.addViewButtonToImage(wardrobeItem, item.url, {
-            type: 'Clothing Item',
-            addedAt: item.addedAt,
-            index: index + 1,
-            source: item.source
-          }, wardrobeCollection, index);
+          }
+        };
+
+        // Add more options button and dropdown
+        if (item.source?.url || global.CTO?.imageViewer?.viewer) {
+          this.addMoreOptionsToItem(wardrobeItem, item, index);
         }
 
-        wardrobeItem.appendChild(img);
+        // Append img to container, then add elements to wardrobe item
+        imgContainer.appendChild(img);
+        wardrobeItem.appendChild(imgContainer);
         wardrobeItem.appendChild(info);
         wardrobeItem.appendChild(addBtn);
         wardrobeForOutfit.appendChild(wardrobeItem);
@@ -562,8 +746,8 @@
       });
 
       try {
-        // Get avatar and API key
-        const { apiKey, avatars, selectedAvatarIndex = 0 } = await CTO.storage.get(['apiKey', 'avatars', 'selectedAvatarIndex']);
+        // Get avatar, API key, and size preference
+        const { apiKey, avatars, selectedAvatarIndex = 0, sizePreference = 'fit' } = await CTO.storage.get(['apiKey', 'avatars', 'selectedAvatarIndex', 'sizePreference']);
         
         if (!apiKey) {
           throw new Error('API key required');
@@ -576,8 +760,8 @@
         const validAvatarIndex = Math.min(Math.max(selectedAvatarIndex || 0, 0), avatars.length - 1);
         const selectedAvatar = avatars[validAvatarIndex];
         
-        if (!selectedAvatar || !selectedAvatar.url) {
-          throw new Error('Selected avatar is invalid');
+        if (!selectedAvatar || !selectedAvatar.url || selectedAvatar.failed) {
+          throw new Error('Selected avatar is invalid or failed to generate. Please generate or retry avatar creation first.');
         }
 
         // Convert avatar to base64
@@ -588,8 +772,8 @@
           clothingUrls.map(url => CTO.image.imageUrlToBase64(url))
         );
 
-        // Generate outfit try-on using Gemini API
-        const generatedImageUrl = await CTO.api.callMultiItemTryOnAPI(baseImageData, clothingDataArray, apiKey);
+        // Generate outfit try-on using Gemini API with size preference
+        const generatedImageUrl = await CTO.api.callMultiItemTryOnAPI(baseImageData, clothingDataArray, apiKey, sizePreference);
 
         // Store the generated outfit
         const outfitItems = clothingUrls.map(url => ({ url, addedAt: new Date().toISOString() }));
@@ -616,6 +800,149 @@
         await CTO.storage.set({ generationInProgress: false, generationStartTime: null });
         
         throw error; // Re-throw to be handled by caller
+      }
+    }
+
+    // Storage Management
+    async getStorageInfo() {
+      try {
+        const totalBytes = await CTO.storage.getBytesInUse();
+        const clothingBytes = await CTO.storage.getBytesInUse('clothingItems');
+        const outfitBytes = await CTO.storage.getBytesInUse('generatedOutfits');
+        const avatarBytes = await CTO.storage.getBytesInUse('avatars');
+        
+        return {
+          total: totalBytes,
+          clothing: clothingBytes,
+          outfits: outfitBytes,
+          avatars: avatarBytes,
+          totalMB: (totalBytes / (1024 * 1024)).toFixed(2),
+          clothingMB: (clothingBytes / (1024 * 1024)).toFixed(2),
+          outfitsMB: (outfitBytes / (1024 * 1024)).toFixed(2),
+          avatarsMB: (avatarBytes / (1024 * 1024)).toFixed(2)
+        };
+      } catch (error) {
+        console.error('Error getting storage info:', error);
+        return null;
+      }
+    }
+
+    async showStorageManagement() {
+      const storageInfo = await this.getStorageInfo();
+      if (!storageInfo) {
+        if (global.toastManager) {
+          global.toastManager.error('Storage Info', 'Unable to get storage information');
+        }
+        return;
+      }
+
+      const message = `
+Storage Usage: ${storageInfo.totalMB} MB / 10 MB
+• Clothing Items: ${storageInfo.clothingMB} MB
+• Generated Outfits: ${storageInfo.outfitsMB} MB  
+• Avatars: ${storageInfo.avatarsMB} MB
+
+Would you like to clear some data to free up space?`;
+
+      if (confirm(message)) {
+        this.showStorageClearOptions();
+      }
+    }
+
+    async showStorageClearOptions() {
+      const options = [
+        'Clear oldest generated outfits',
+        'Clear all generated outfits', 
+        'Clear clothing items (wardrobe)',
+        'Clear everything (reset app)'
+      ];
+      
+      const choice = prompt(`Choose what to clear:\n${options.map((opt, i) => `${i + 1}. ${opt}`).join('\n')}\n\nEnter number (1-4):`);
+      
+      if (!choice) return;
+      
+      const index = parseInt(choice) - 1;
+      if (index >= 0 && index < options.length) {
+        switch (index) {
+          case 0:
+            await this.clearOldestOutfits();
+            break;
+          case 1:
+            await this.clearAllOutfits();
+            break;
+          case 2:
+            await this.clearClothingItems();
+            break;
+          case 3:
+            await this.clearAllData();
+            break;
+        }
+      }
+    }
+
+    async clearOldestOutfits() {
+      if (this.generatedOutfits.length === 0) {
+        if (global.toastManager) {
+          global.toastManager.info('Nothing to Clear', 'No generated outfits found');
+        }
+        return;
+      }
+
+      // Sort by date and remove oldest half
+      const sorted = [...this.generatedOutfits].sort((a, b) => 
+        new Date(a.createdAt) - new Date(b.createdAt)
+      );
+      const toRemove = Math.ceil(sorted.length / 2);
+      const remaining = sorted.slice(toRemove);
+      
+      await CTO.storage.set({ generatedOutfits: remaining });
+      this.generatedOutfits = remaining;
+      this.displayOutfits();
+      
+      if (global.toastManager) {
+        global.toastManager.success('Storage Cleared', `Removed ${toRemove} oldest generated outfits`);
+      }
+    }
+
+    async clearAllOutfits() {
+      if (confirm('Are you sure you want to delete all generated outfits?')) {
+        await CTO.storage.set({ generatedOutfits: [] });
+        this.generatedOutfits = [];
+        this.displayOutfits();
+        
+        if (global.toastManager) {
+          global.toastManager.success('Storage Cleared', 'All generated outfits removed');
+        }
+      }
+    }
+
+    async clearClothingItems() {
+      if (confirm('Are you sure you want to delete all clothing items from your wardrobe?')) {
+        await CTO.storage.set({ clothingItems: [] });
+        this.clothingItems = [];
+        this.displayWardrobe();
+        await this.loadWardrobeForOutfit();
+        
+        if (global.toastManager) {
+          global.toastManager.success('Storage Cleared', 'All clothing items removed');
+        }
+      }
+    }
+
+    async clearAllData() {
+      if (confirm('Are you sure you want to reset the entire app? This will delete ALL data including avatars, outfits, and clothing items.')) {
+        await CTO.storage.clear();
+        this.currentOutfit = [];
+        this.generatedOutfits = [];
+        this.clothingItems = [];
+        this.updateOutfitDisplay();
+        this.displayOutfits();
+        this.displayWardrobe();
+        await this.loadWardrobeForOutfit();
+        
+        if (global.toastManager) {
+          global.toastManager.success('App Reset', 'All data cleared - app has been reset');
+        }
       }
     }
 
@@ -665,7 +992,166 @@
       
       return userMessage;
     }
-  };
+
+    // Add more options button and dropdown to outfit items
+    addMoreOptionsToItem(container, item, index) {
+      const moreOptionsBtn = document.createElement('button');
+      moreOptionsBtn.className = 'more-options-btn';
+      moreOptionsBtn.innerHTML = '...';
+      
+      const dropdown = document.createElement('div');
+      dropdown.className = 'more-options-dropdown';
+      
+      // Add delete option
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'more-options-item delete';
+      deleteBtn.textContent = 'Remove';
+      deleteBtn.onclick = (e) => {
+        e.stopPropagation();
+        this.deleteClothingItem(index);
+        dropdown.classList.remove('active');
+      };
+      
+      // Add view source option if available
+      if (item.source?.url) {
+        const sourceBtn = document.createElement('button');
+        sourceBtn.className = 'more-options-item';
+        sourceBtn.textContent = 'Source';
+        sourceBtn.onclick = async (e) => {
+          e.stopPropagation();
+          try {
+            await chrome.tabs.create({ url: item.source.url });
+            if (global.toastManager) {
+              global.toastManager.success('Source Opened', 'Original source opened in new tab');
+            }
+          } catch (error) {
+            console.error('Error opening source URL:', error);
+            if (global.toastManager) {
+              global.toastManager.error('Error', 'Failed to open source URL');
+            }
+          }
+          dropdown.classList.remove('active');
+        };
+        dropdown.appendChild(sourceBtn);
+      }
+      
+      dropdown.appendChild(deleteBtn);
+      
+      // Toggle dropdown on button click
+      moreOptionsBtn.onclick = (e) => {
+        e.stopPropagation();
+        // Close all other dropdowns
+        document.querySelectorAll('.more-options-dropdown.active').forEach(d => {
+          if (d !== dropdown) d.classList.remove('active');
+        });
+        dropdown.classList.toggle('active');
+      };
+      
+      // Close dropdown when clicking outside
+      document.addEventListener('click', (e) => {
+        if (!container.contains(e.target)) {
+          dropdown.classList.remove('active');
+        }
+      });
+      
+      container.appendChild(moreOptionsBtn);
+      container.appendChild(dropdown);
+    }
+
+    // Delete clothing item from wardrobe
+    async deleteClothingItem(index) {
+      if (index < 0 || index >= this.clothingItems.length) return;
+      
+      const item = this.clothingItems[index];
+      
+      // Remove from local array
+      this.clothingItems.splice(index, 1);
+      
+      // Update storage
+      await CTO.storage.set({ clothingItems: this.clothingItems });
+      
+      // Refresh displays
+      this.displayWardrobe();
+      this.loadWardrobeForOutfit();
+      
+      // Show notification for item removal
+      if (global.toastManager) {
+        const itemName = this.generateItemName(item);
+        global.toastManager.wardrobeItemRemoved(itemName);
+      }
+     }
+
+     // Add more options button and dropdown to generated outfit items
+     addMoreOptionsToOutfit(container, outfit, index) {
+       const moreOptionsBtn = document.createElement('button');
+       moreOptionsBtn.className = 'more-options-btn';
+       moreOptionsBtn.innerHTML = '...';
+       
+       const dropdown = document.createElement('div');
+       dropdown.className = 'more-options-dropdown';
+       
+       // Add delete option
+       const deleteBtn = document.createElement('button');
+       deleteBtn.className = 'more-options-item delete';
+       deleteBtn.textContent = 'Delete';
+       deleteBtn.onclick = (e) => {
+         e.stopPropagation();
+         this.deleteGeneratedOutfit(index);
+         dropdown.classList.remove('active');
+       };
+       
+       dropdown.appendChild(deleteBtn);
+       
+       // Toggle dropdown on button click
+       moreOptionsBtn.onclick = (e) => {
+         e.stopPropagation();
+         // Close all other dropdowns
+         document.querySelectorAll('.more-options-dropdown.active').forEach(d => {
+           if (d !== dropdown) d.classList.remove('active');
+         });
+         dropdown.classList.toggle('active');
+       };
+       
+       // Close dropdown when clicking outside
+       document.addEventListener('click', (e) => {
+         if (!container.contains(e.target)) {
+           dropdown.classList.remove('active');
+         }
+       });
+       
+       container.appendChild(moreOptionsBtn);
+       container.appendChild(dropdown);
+     }
+
+         // Delete generated outfit
+    async deleteGeneratedOutfit(index) {
+      const sortedOutfits = this.generatedOutfits.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      if (index < 0 || index >= sortedOutfits.length) return;
+      
+      const outfitToDelete = sortedOutfits[index];
+      
+      // Find the original index in the unsorted array
+      const originalIndex = this.generatedOutfits.findIndex(outfit => 
+        outfit.createdAt === outfitToDelete.createdAt && 
+        outfit.generatedImage === outfitToDelete.generatedImage
+      );
+      
+      if (originalIndex === -1) return;
+      
+      // Remove from local array
+      this.generatedOutfits.splice(originalIndex, 1);
+      
+      // Update storage
+      await CTO.storage.set({ generatedOutfits: this.generatedOutfits });
+      
+      // Refresh display
+      this.displayOutfits();
+      
+      if (global.toastManager) {
+        global.toastManager.success('Deleted', 'Outfit removed from collection');
+      }
+    }
+   };
 
   // Create global outfit manager instance
   ns.outfit.manager = new ns.outfit.OutfitManager();

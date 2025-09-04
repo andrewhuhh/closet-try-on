@@ -74,27 +74,55 @@
         const base64 = part.inlineData.data || '';
         return `data:${mime};base64,${base64}`;
       });
-    if (generatedImages.length < 4) {
-      const err = new Error('Not enough avatar images generated');
-      err.userMessage = 'The model did not return enough images. Try fewer/smaller photos.';
-      throw err;
-      }
+    
+    // Create avatar objects for successful generations
     const jpegAvatars = await Promise.all(
       generatedImages.map(async (dataUrl, index) => {
         const jpegDataUrl = await global.CTO.image.convertToJPEG(dataUrl);
         return { url: jpegDataUrl, pose: ['front-neutral', 'front-open', 'three-quarter', 'side-profile'][index] || 'front-neutral', createdAt: new Date().toISOString() };
       })
     );
-    return jpegAvatars;
+    
+    // Create placeholders for missing avatars
+    const poseNames = ['front-neutral', 'front-open', 'three-quarter', 'side-profile'];
+    const poseLabels = ['Neutral front-facing', 'Front-facing open stance', 'Three-quarter angle', 'Side profile'];
+    const allAvatars = [];
+    
+    for (let i = 0; i < 4; i++) {
+      if (i < jpegAvatars.length) {
+        allAvatars.push(jpegAvatars[i]);
+      } else {
+        allAvatars.push({
+          url: null,
+          pose: poseNames[i],
+          poseLabel: poseLabels[i],
+          failed: true,
+          createdAt: new Date().toISOString()
+        });
+      }
+    }
+    
+    return {
+      avatars: allAvatars,
+      successCount: jpegAvatars.length,
+      totalRequested: 4,
+      partialSuccess: jpegAvatars.length > 0 && jpegAvatars.length < 4
+    };
   };
 
-  ns.api.callMultiItemTryOnAPI = async function callMultiItemTryOnAPI(baseImageData, clothingDataArray, apiKey) {
+  ns.api.callMultiItemTryOnAPI = async function callMultiItemTryOnAPI(baseImageData, clothingDataArray, apiKey, sizePreference = 'fit') {
     const API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent';
+    
+    // Create size-specific instruction based on preference
+    const sizeInstruction = sizePreference === 'retain' 
+      ? 'Maintain the original proportions and sizing of the clothing items as they appear in the reference images. Do not resize the clothing to fit the person - keep the garments at their natural dimensions and proportions.'
+      : 'Resize and adjust the clothing items to properly fit the person\'s body size, proportions, and measurements. Ensure the garments fit naturally and appropriately on the person\'s frame.';
+    
     const contents = [
       {
         role: 'user',
         parts: [
-          { text: `Remove existing clothing from the base image and dress the person in the provided clothing items. Layer the clothes naturally and ensure realistic fit, drape, and alignment. The first image is the person, followed by ${clothingDataArray.length} clothing items to be worn together. Preserve the person's face, hairstyle, body type, and skin tone. Use a plain white background. Generate a high-resolution, realistic photo result.\n\nIMAGE SPECIFICATIONS:\n- Generate the image in portrait orientation with dimensions 768 pixels wide by 1152 pixels tall\n- Use JPEG format for the output image\n- Ensure high quality and clarity at these specific dimensions` },
+          { text: `Remove existing clothing from the base image and dress the person in the provided clothing items. Layer the clothes naturally and ensure realistic fit, drape, and alignment. The first image is the person, followed by ${clothingDataArray.length} clothing items to be worn together. Preserve the person's face, hairstyle, body type, and skin tone. Use a plain white background. Generate a high-resolution, realistic photo result.\n\nSIZE FITTING INSTRUCTION:\n${sizeInstruction}\n\nIMAGE SPECIFICATIONS:\n- Generate the image in portrait orientation with dimensions 768 pixels wide by 1152 pixels tall\n- Use JPEG format for the output image\n- Ensure high quality and clarity at these specific dimensions` },
           { inlineData: { mimeType: 'image/jpeg', data: baseImageData } },
           ...clothingDataArray.map(data => ({ inlineData: { mimeType: 'image/jpeg', data } }))
         ]
